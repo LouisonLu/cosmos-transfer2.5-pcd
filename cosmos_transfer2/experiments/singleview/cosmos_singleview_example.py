@@ -159,6 +159,79 @@ transfer2_singleview_posttrain_depth_example = dict(
 
 
 # =============================================================================
+# Post-training with PCD Input + Depth Control + Image Context (2B Model)
+# =============================================================================
+
+transfer2_singleview_posttrain_pcd_rgb_image_context_example = dict(
+    defaults=[
+        DEFAULT_BASE_EXPERIMENT,
+        {"override /data_train": "example_singleview_train_data_depth"},
+        {"override /conditioner": "video_prediction_control_conditioner_image_context"},
+    ],
+    job=dict(
+        project="cosmos_transfer2_posttrain",
+        group="local_single_view",
+        name="transfer2_singleview_posttrain_pcd_rgb_image_context_example",
+    ),
+    checkpoint=dict(
+        save_iter=1000,
+        load_path=DEPTH_CHECKPOINT.s3.uri,
+        load_training_state=False,
+        strict_resume=False,
+        load_from_object_store=dict(enabled=False),
+        save_to_object_store=dict(enabled=False),
+    ),
+    model=dict(
+        config=dict(
+            hint_keys="depth",
+            base_load_from=None,  # Disable base model loading (already loading from checkpoint.load_path)
+            use_reference_image=True,
+            min_num_conditional_frames=1,
+            max_num_conditional_frames=1,
+            net=dict(
+                extra_image_context_dim=1152,
+                share_q_in_i2v_cross_attn=True,
+                img_context_deep_proj=False,
+            ),
+        ),
+    ),
+    dataloader_train=dict(
+        dataset=dict(
+            control_input_type="depth",
+            input_video_dir="pcd_videos",
+            target_video_dir="rgb_videos",
+            input_video_suffix="_vis_pcd",
+            control_video_dir_override="pcd_videos",
+            control_video_suffix="_vis_pcd",
+            use_image_context=True,
+            image_context_from_rgb_first_frame=True,
+        ),
+    ),
+    trainer=dict(
+        max_iter=5000,
+        straggler_detection=dict(enabled=False),  # Disable for local training
+        callbacks=dict(
+            heart_beat=dict(save_s3=False),
+            iter_speed=dict(save_s3=False),
+            device_monitor=dict(save_s3=False),
+            every_n_sample_reg=dict(save_s3=False, every_n=200),
+            every_n_sample_ema=dict(save_s3=False, every_n=200),
+            wandb=dict(save_s3=False),
+            wandb_10x=dict(save_s3=False),
+            dataloader_speed=dict(save_s3=False),
+            frame_loss_log=dict(save_s3=False),
+        ),
+    ),
+    scheduler=dict(
+        cycle_lengths=[5000],
+    ),
+    model_parallel=dict(
+        context_parallel_size=int(os.environ.get("WORLD_SIZE", "1")),
+    ),
+)
+
+
+# =============================================================================
 # Post-training with Segmentation Control (2B Model)
 # =============================================================================
 
@@ -281,6 +354,7 @@ cs = ConfigStore.instance()
 for _item in [
     transfer2_singleview_posttrain_edge_example,
     transfer2_singleview_posttrain_depth_example,
+    transfer2_singleview_posttrain_pcd_rgb_image_context_example,
     transfer2_singleview_posttrain_seg_example,
     transfer2_singleview_posttrain_vis_example,
 ]:

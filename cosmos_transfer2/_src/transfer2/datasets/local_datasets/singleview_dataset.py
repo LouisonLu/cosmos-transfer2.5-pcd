@@ -43,12 +43,16 @@ from typing import Any
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from decord import VideoReader, cpu
 from torch.utils.data import Dataset
 
 from cosmos_transfer2._src.imaginaire.lazy_config import instantiate
 from cosmos_transfer2._src.imaginaire.utils import log
-from cosmos_transfer2._src.transfer2.datasets.augmentor_provider import get_video_augmentor_v2_with_control
+from cosmos_transfer2._src.transfer2.datasets.augmentor_provider import (
+    get_video_augmentor_v2_with_control,
+    get_video_augmentor_v2_with_control_and_image_context,
+)
 from cosmos_transfer2._src.transfer2.utils.input_handling import detect_aspect_ratio
 
 
@@ -121,6 +125,13 @@ class SingleViewTransferDataset(Dataset):
         hint_key: str = "control_input_edge",
         is_train: bool = True,
         caption_type: str = "t2w_qwen2p5_7b",  # Use Qwen2.5-7B caption type
+        input_video_dir: str | None = None,
+        target_video_dir: str | None = None,
+        input_video_suffix: str = "_vis_pcd",
+        control_video_dir_override: str | None = None,
+        control_video_suffix: str | None = None,
+        use_image_context: bool = False,
+        image_context_from_rgb_first_frame: bool = False,
         **kwargs,  # Accept extra params for config compatibility (like MultiviewTransferDataset)
     ) -> None:
         super().__init__()
@@ -130,6 +141,10 @@ class SingleViewTransferDataset(Dataset):
         self.resolution = resolution
         self.is_train = is_train
         self.caption_type = caption_type
+        self.input_video_suffix = input_video_suffix
+        self.control_video_suffix = control_video_suffix or input_video_suffix
+        self.use_image_context = use_image_context
+        self.image_context_from_rgb_first_frame = image_context_from_rgb_first_frame
 
         # Parse control type from hint_key
         self.hint_key = hint_key
@@ -141,8 +156,21 @@ class SingleViewTransferDataset(Dataset):
         self.ctrl_config = CTRL_TYPE_INFO[self.ctrl_type]
 
         # Set up directories
-        video_dir = os.path.join(self.dataset_dir, "videos")
-        self.video_paths = sorted([os.path.join(video_dir, f) for f in os.listdir(video_dir) if f.endswith(".mp4")])
+        target_dir = os.path.join(self.dataset_dir, target_video_dir or "videos")
+        self.video_paths = sorted([os.path.join(target_dir, f) for f in os.listdir(target_dir) if f.endswith(".mp4")])
+
+        self.input_video_dir = None
+        self.input_video_paths: dict[str, str] = {}
+        if input_video_dir is not None:
+            input_dir = os.path.join(self.dataset_dir, input_video_dir)
+            if os.path.isdir(input_dir):
+                self.input_video_dir = input_dir
+                for video_path in self.video_paths:
+                    video_name = os.path.basename(video_path).replace(".mp4", "")
+                    input_name = f"{video_name}{self.input_video_suffix}.mp4"
+                    self.input_video_paths[video_name] = os.path.join(input_dir, input_name)
+            else:
+                log.warning(f"Input video dir does not exist: {input_dir}. Falling back to target videos.")
 
         # Support both "captions/" and "metas/" directories
         self.caption_dir = os.path.join(self.dataset_dir, "captions")
@@ -158,13 +186,22 @@ class SingleViewTransferDataset(Dataset):
         # This includes randomized edge detection, reflection padding, and text transforms
         # Pass embedding_type=None since we're handling T5 embeddings ourselves
         # (if embedding_type is set, the function returns early with only video_parsing)
-        augmentor_config = get_video_augmentor_v2_with_control(
-            resolution=resolution,
-            caption_type=caption_type,
-            embedding_type=None,  # We handle embeddings ourselves, get full augmentor pipeline
-            control_input_type=self.ctrl_type,
-            use_random=is_train,  # Enable random augmentations for training
-        )
+        if self.use_image_context:
+            augmentor_config = get_video_augmentor_v2_with_control_and_image_context(
+                resolution=resolution,
+                caption_type=caption_type,
+                embedding_type=None,  # We handle embeddings ourselves, get full augmentor pipeline
+                control_input_type=self.ctrl_type,
+                use_random=is_train,  # Enable random augmentations for training
+            )
+        else:
+            augmentor_config = get_video_augmentor_v2_with_control(
+                resolution=resolution,
+                caption_type=caption_type,
+                embedding_type=None,  # We handle embeddings ourselves, get full augmentor pipeline
+                control_input_type=self.ctrl_type,
+                use_random=is_train,  # Enable random augmentations for training
+            )
 
         # Filter out augmentors that don't apply to local datasets
         # The augmentor pipeline includes augmentors designed for S3/WebDataset that need to be skipped:
@@ -173,7 +210,14 @@ class SingleViewTransferDataset(Dataset):
         # - seg_parsing: Decodes seg bytes from S3 key "segmentation_sam2_color_video_v2" → we load from local seg/ folder
         # - merge_datadict: Merges multiple WebDataset shards → not needed for single local dataset
         # - text_transform: Loads pre-computed T5 embeddings → we pass raw captions for on-the-fly encoding
-        skip_augmentors = ["video_parsing", "merge_datadict", "text_transform", "depth_parsing", "seg_parsing"]
+        skip_augmentors = [
+            "video_parsing",
+            "video_parsing_with_image_context",
+            "merge_datadict",
+            "text_transform",
+            "depth_parsing",
+            "seg_parsing",
+        ]
         augmentor_config = {k: v for k, v in augmentor_config.items() if k not in skip_augmentors}
 
         log.info(f"Filtered augmentors: {list(augmentor_config.keys())}")
@@ -190,6 +234,23 @@ class SingleViewTransferDataset(Dataset):
         log.info(f"  Control type: {self.ctrl_type}")
         log.info(f"  Resolution: {resolution}, Video size: {video_size}")
         log.info(f"  Required frames: {self.sequence_length}")
+        if self.use_image_context:
+            log.info("  Image context: enabled")
+        if self.input_video_dir:
+            log.info(f"  Input video dir: {self.input_video_dir}")
+
+        # Optional override for control video directory
+        self.control_video_dir_override = None
+        if control_video_dir_override is not None:
+            override_dir = os.path.join(self.dataset_dir, control_video_dir_override)
+            if os.path.isdir(override_dir):
+                self.control_video_dir_override = override_dir
+            else:
+                log.warning(f"Control video dir override does not exist: {override_dir}")
+        elif self.ctrl_type == "depth" and self.input_video_dir is not None:
+            depth_dir = os.path.join(self.dataset_dir, "depth")
+            if not os.path.isdir(depth_dir):
+                self.control_video_dir_override = self.input_video_dir
 
         # Quick validation: check for obviously bad videos (optional, can be slow for large datasets)
         # self._validate_videos()  # Uncomment to pre-filter bad videos at initialization
@@ -278,6 +339,12 @@ class SingleViewTransferDataset(Dataset):
         del vr
         return frame_data, fps, frame_ids
 
+    def _load_first_frame(self, video_path: str) -> np.ndarray:
+        vr = VideoReader(video_path, ctx=cpu(0), num_threads=2)
+        frame = vr.get_batch([0]).asnumpy()[0]
+        del vr
+        return frame
+
     def _load_caption(self, video_name: str) -> str:
         """Load caption from JSON or text file.
 
@@ -332,8 +399,14 @@ class SingleViewTransferDataset(Dataset):
             return None
 
         ctrl_folder = os.path.join(self.dataset_dir, self.ctrl_config["folder"])
+        if self.control_video_dir_override is not None:
+            ctrl_folder = self.control_video_dir_override
         ctrl_format = self.ctrl_config["format"]
-        ctrl_path = os.path.join(ctrl_folder, f"{video_name}.{ctrl_format}")
+        if self.control_video_dir_override is not None and self.ctrl_type == "depth":
+            ctrl_filename = f"{video_name}{self.control_video_suffix}.{ctrl_format}"
+        else:
+            ctrl_filename = f"{video_name}.{ctrl_format}"
+        ctrl_path = os.path.join(ctrl_folder, ctrl_filename)
 
         if not os.path.exists(ctrl_path):
             raise FileNotFoundError(f"Control input file not found: {ctrl_path}")
@@ -445,6 +518,23 @@ class SingleViewTransferDataset(Dataset):
                     "n_orig_video_frames": len(frame_ids),
                 }
 
+                # Optional: load separate input video (e.g., PCD) aligned to target frames
+                if self.input_video_dir is not None:
+                    input_video_path = self.input_video_paths.get(video_name)
+                    if input_video_path is None or not os.path.exists(input_video_path):
+                        raise FileNotFoundError(
+                            f"Input video not found for '{video_name}' at {input_video_path}"
+                        )
+                    input_frames, _, _ = self._load_video(input_video_path, frame_ids=frame_ids)
+                    input_frames = input_frames.astype(np.uint8)
+                    input_frames_t = torch.from_numpy(input_frames).permute(0, 3, 1, 2)  # (T, C, H, W)
+                    data["input_video"] = input_frames_t.permute(1, 0, 2, 3)  # (C, T, H, W)
+
+                # Optional: on-the-fly image context from first RGB frame
+                if self.use_image_context and self.image_context_from_rgb_first_frame:
+                    first_frame = self._load_first_frame(video_path)
+                    data["image_context"] = torch.from_numpy(first_frame).permute(2, 0, 1).to(torch.uint8)
+
                 # Load caption
                 caption = self._load_caption(video_name)
                 data[self.caption_type] = caption
@@ -495,6 +585,20 @@ class SingleViewTransferDataset(Dataset):
                     if result is None:
                         raise ValueError(f"Augmentor {aug_name} filtered out the sample")
                     data = result
+
+                # Ensure input_video matches augmented video spatial size if provided.
+                if "input_video" in data:
+                    _, _, h, w = data["video"].shape
+                    input_video = data["input_video"]
+                    if input_video.shape[-2:] != (h, w):
+                        input_video_tchw = input_video.permute(1, 0, 2, 3).float()
+                        resized = F.interpolate(
+                            input_video_tchw,
+                            size=(h, w),
+                            mode="bilinear",
+                            align_corners=False,
+                        )
+                        data["input_video"] = resized.permute(1, 0, 2, 3).clamp(0, 255).to(torch.uint8)
 
                 # Convert MockUrl back to string for DataLoader collate compatibility
                 # (PyTorch's collate function can't handle custom objects)

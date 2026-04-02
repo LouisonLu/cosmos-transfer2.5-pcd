@@ -78,6 +78,24 @@ class ControlVideo2WorldModel(Video2WorldModel):
             data_batch[self.input_image_key] = data_batch[self.input_image_key].to(**self.tensor_kwargs) / 127.5 - 1.0
             del data_batch[self.input_data_key]
         raw_state, latent_state, condition = super().get_data_and_condition(data_batch)
+
+        # If input_video is provided, use it for conditioning frames while keeping RGB video as target.
+        if "input_video" in data_batch:
+            input_video = data_batch["input_video"]
+            if input_video.ndim == 4:
+                input_video = input_video.unsqueeze(0)
+            if input_video.dtype == torch.uint8:
+                input_video = input_video.to(**self.tensor_kwargs) / 127.5 - 1.0
+            else:
+                input_video = input_video.to(**self.tensor_kwargs)
+            input_latent = self.encode(input_video).contiguous().float()
+            condition = condition.set_video_condition(
+                gt_frames=input_latent,
+                random_min_num_conditional_frames=self.config.min_num_conditional_frames,
+                random_max_num_conditional_frames=self.config.max_num_conditional_frames,
+                num_conditional_frames=data_batch.get(NUM_CONDITIONAL_FRAMES_KEY, None),
+                conditional_frames_probs=self.config.conditional_frames_probs,
+            )
         # Add control conditioning
         latent_control_input = []
         control_weight = data_batch.get("control_weight", [1.0] * len(self.hint_keys))
