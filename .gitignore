@@ -196,7 +196,7 @@ cython_debug/
 .cursorindexingignore
 
 /checkpoints/
-/datasets/
+# /datasets/
 /output/
 /outputs/
 /results/
