@@ -127,7 +127,7 @@ class SingleViewTransferDataset(Dataset):
         caption_type: str = "t2w_qwen2p5_7b",  # Use Qwen2.5-7B caption type
         input_video_dir: str | None = None,
         target_video_dir: str | None = None,
-        input_video_suffix: str = "_vis_pcd",
+        input_video_suffix: str = "_vis_pcd_firstframe",
         control_video_dir_override: str | None = None,
         control_video_suffix: str | None = None,
         use_image_context: bool = False,

@@ -116,7 +116,7 @@ transfer2_singleview_posttrain_depth_example = dict(
         name="transfer2_singleview_posttrain_depth_example",
     ),
     checkpoint=dict(
-        save_iter=1000,
+        save_iter=500,
         load_path=DEPTH_CHECKPOINT.s3.uri,
         load_training_state=False,
         strict_resume=False,
@@ -127,6 +127,12 @@ transfer2_singleview_posttrain_depth_example = dict(
         config=dict(
             hint_keys="depth",
             base_load_from=None,  # Disable base model loading (already loading from checkpoint.load_path)
+            min_num_conditional_frames=1,
+            max_num_conditional_frames=1,
+            freeze_base_model=False, ######
+            # net=dict(
+            #     use_adaln_lora="True",
+            # ),
         ),
     ),
     dataloader_train=dict(

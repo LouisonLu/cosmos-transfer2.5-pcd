@@ -46,6 +46,7 @@ IS_PREPROCESSED_KEY = "is_preprocessed"
 @attrs.define(slots=False)
 class ControlVideo2WorldConfig(Video2WorldConfig):
     base_load_from: LazyDict = None
+    freeze_base_model: bool = True  # Whether to freeze the base model during control training
     min_num_conditional_frames: int = 0  # Minimum number of latent conditional frames
     max_num_conditional_frames: int = 2  # Maximum number of latent conditional frames
     copy_weight_strategy: str = (
@@ -65,7 +66,8 @@ class ControlVideo2WorldModel(Video2WorldModel):
         self.copy_weight_strategy = config.copy_weight_strategy
         self.hint_keys = ["control_input_" + key for key in config.hint_keys.split("_")]
         super().__init__(config, *args, **kwargs)
-        self.freeze_base_model()
+        if config.freeze_base_model:
+            self.freeze_base_model()
         log.info(self.net, rank0_only=True)
 
     def get_data_and_condition(
