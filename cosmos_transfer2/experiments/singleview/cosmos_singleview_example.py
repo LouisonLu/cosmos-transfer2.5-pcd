@@ -129,6 +129,7 @@ transfer2_singleview_posttrain_depth_example = dict(
             base_load_from=None,  # Disable base model loading (already loading from checkpoint.load_path)
             min_num_conditional_frames=1,
             max_num_conditional_frames=1,
+            denoise_replace_gt_frames=True,
             freeze_base_model=False, ######
             # net=dict(
             #     use_adaln_lora="True",
@@ -141,7 +142,7 @@ transfer2_singleview_posttrain_depth_example = dict(
         ),
     ),
     trainer=dict(
-        max_iter=5000,
+        max_iter=3000,
         straggler_detection=dict(enabled=False),  # Disable for local training
         callbacks=dict(
             heart_beat=dict(save_s3=False),
