@@ -198,7 +198,7 @@ cython_debug/
 /checkpoints/
 # /datasets/
 /output/
-/outputs/
+# /outputs/
 /results/
 /tmp/
 
