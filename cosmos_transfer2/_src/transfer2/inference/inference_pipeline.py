@@ -538,7 +538,9 @@ class ControlVideo2WorldInference:
             control_video_dict = {}
             all_control_chunks = {key: [] for key in hint_key}
             # For first chunk, use zeros as input (after normalization it is 0)
-            prev_output = torch.zeros_like(input_frames[:, :num_video_frames_per_chunk]).to(torch.uint8).cuda()[None]
+            # prev_output = torch.zeros_like(input_frames[:, :num_video_frames_per_chunk]).to(torch.uint8).cuda()[None]
+            # Adjusted: for better generation quality for the first chunk, use the input frames as the initial prev_output. This is especially helpful when num_conditional_frames is 1, so that the single conditional frame is the same as the first frame of the generated video, providing better temporal consistency right from the start.
+            prev_output = input_frames[:, :num_video_frames_per_chunk].to(torch.uint8).cuda()[None]
 
         # --------Start of chunk-wise long video generation--------
         self.model.eval()
@@ -619,7 +621,9 @@ class ControlVideo2WorldInference:
                 )
 
                 if chunk_id == 0:
-                    data_batch[NUM_CONDITIONAL_FRAMES_KEY] = 0
+                    # data_batch[NUM_CONDITIONAL_FRAMES_KEY] = 0
+                    # Adjusted: set num_conditional_frames to 1 for the first chunk to provide better temporal consistency from the start, especially when num_conditional_frames is 1. This way, the single conditional frame is the same as the first frame of the generated video.
+                    data_batch[NUM_CONDITIONAL_FRAMES_KEY] = 1
                 else:
                     data_batch[NUM_CONDITIONAL_FRAMES_KEY] = (
                         1 + (num_conditional_frames - 1) // 4
