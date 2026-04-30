@@ -7,6 +7,8 @@ import argparse
 import json
 import os
 import subprocess
+import errno
+import shutil
 from fractions import Fraction
 
 
@@ -90,7 +92,18 @@ def replace_first_frame(source_video: str, target_video: str, output_video: str 
     ])
 
     final_output = output_video or target_video
-    os.replace(temp_output, final_output)
+
+    if output_video is not None:
+        out_dir = os.path.dirname(final_output)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+
+    try:
+        os.replace(temp_output, final_output)
+    except OSError as e:
+        if e.errno != errno.EXDEV:
+            raise
+        shutil.move(temp_output, final_output)
     return final_output
 
 
