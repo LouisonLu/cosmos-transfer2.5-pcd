@@ -52,7 +52,7 @@ class VideoParsing(Augmentor):
         if self.use_native_fps:
             assert self.num_frames > 0, "num_frames must be greater than 0 when use_native_fps is True"
         self.video_decode_num_threads = args["video_decode_num_threads"]
-        self.resolution = args.get("resolution", "720")
+        self.resolution = str(args.get("resolution", "720"))
 
     def __call__(self, data_dict: dict) -> dict:
         try:
@@ -212,7 +212,7 @@ class VideoParsingWithImageContext(Augmentor):
         if self.use_native_fps:
             assert self.num_frames > 0, "num_frames must be greater than 0 when use_native_fps is True"
         self.video_decode_num_threads = args["video_decode_num_threads"]
-        self.resolution = args.get("resolution", "720")
+        self.resolution = str(args.get("resolution", "720"))
 
     def __call__(self, data_dict: dict) -> dict:
         try:

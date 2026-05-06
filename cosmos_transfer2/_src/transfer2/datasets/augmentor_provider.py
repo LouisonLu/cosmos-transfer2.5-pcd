@@ -135,6 +135,7 @@ def get_video_augmentor_v1(
     Supported caption_type include vila_caption.
     Supported embedding_type include t5_xxl.
     """
+    resolution = str(resolution)
     assert caption_type == "vila_caption", f"Unsupported caption type ({caption_type}) for video data"
     assert embedding_type == "t5_xxl", f"Unsupported embeddings type ({embedding_type}) for video data"
     video_text_transform = get_video_text_transform(
@@ -198,6 +199,7 @@ def get_video_augmentor_v2(
     Supported caption_type include t2w_qwen2p5_7b and i2w_qwen2p5_7b_later_frames.
     Supported embedding_type include t5_xxl and umt5_xxl.
     """
+    resolution = str(resolution)
     video_text_transform = get_video_text_transform(
         caption_type=caption_type,
         embedding_type=embedding_type,
@@ -564,6 +566,7 @@ def get_video_augmentor_v2_with_control_and_image_context(
     Supported caption_type include t2w_qwen2p5_7b and i2w_qwen2p5_7b_later_frames.
     Supported embedding_type include t5_xxl and umt5_xxl.
     """
+    resolution = str(resolution)
     video_text_transform = get_video_text_transform(caption_type=caption_type, embedding_type=embedding_type)
     if caption_type == "t2w_qwen2p5_7b":
         key_for_caption = "t2w_windows"
@@ -708,6 +711,7 @@ def get_video_augmentor_with_control_input(
     Supported caption_type include t2w_qwen2p5_7b and i2w_qwen2p5_7b_later_frames.
     Supported embedding_type include t5_xxl and umt5_xxl.
     """
+    resolution = str(resolution)
     video_text_transform = get_video_text_transform(caption_type=caption_type, embedding_type=embedding_type)
     if caption_type == "t2w_qwen2p5_7b":
         key_for_caption = "t2w_windows"
