@@ -41,6 +41,7 @@ from cosmos_transfer2.config import (
 
 VISIBLE_PRESERVE_EXPERIMENT = "transfer2_singleview_visible_preserve_pcd_rgb_image_context_example"
 VISIBLE_PRESERVE_CONFIG_FILE = "cosmos_transfer2/singleview_visible_preserve_config.py"
+DEFAULT_TRANSFER_CONFIG_FILE = "cosmos_transfer2/_src/transfer2/configs/vid2vid_transfer/config.py"
 
 
 class Control2WorldInferenceVisiblePreserve:
@@ -127,7 +128,9 @@ class Control2WorldInferenceVisiblePreserve:
             exp_override_opts = EXPERIMENTS[self.experiment].command_args.copy()
 
         config_file = args.config_file
-        if registered_exp_name == VISIBLE_PRESERVE_EXPERIMENT and not config_file:
+        if registered_exp_name == VISIBLE_PRESERVE_EXPERIMENT and (
+            not config_file or config_file == DEFAULT_TRANSFER_CONFIG_FILE
+        ):
             config_file = VISIBLE_PRESERVE_CONFIG_FILE
             log.info(f"Using visible-preserve config file: {config_file}")
 
