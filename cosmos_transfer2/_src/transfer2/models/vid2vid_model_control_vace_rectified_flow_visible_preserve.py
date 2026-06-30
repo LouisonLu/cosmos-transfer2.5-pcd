@@ -585,6 +585,7 @@ class ControlVideo2WorldModelRectifiedFlowVisiblePreserve(Video2WorldModelRectif
             x0 = x0_spatial_condition["x0"]
             x_sigma_mask = x0_spatial_condition["x_sigma_mask"]
             step_threshold = x0_spatial_condition["step_threshold"]
+            keep_noise_scale = x0_spatial_condition.get("keep_noise_scale", 1.0)
 
         use_spatial_split = False
         if self.net.is_context_parallel_enabled:
@@ -627,7 +628,8 @@ class ControlVideo2WorldModelRectifiedFlowVisiblePreserve(Video2WorldModelRectif
             timestep = torch.stack(timestep)
             if x0_spatial_condition is not None and num_step <= step_threshold:
                 sigma = sigmas[num_step]
-                cur_x0 = x0 * (1 - sigma) + noise * sigma
+                preserve_sigma = sigma * keep_noise_scale
+                cur_x0 = x0 * (1 - preserve_sigma) + noise * preserve_sigma
                 latent_model_input = cur_x0 * x_sigma_mask + latent_model_input * (1 - x_sigma_mask)
                 if get_rank() == 0:
                     log.debug(f"denoising with guided generation at step {num_step}")
