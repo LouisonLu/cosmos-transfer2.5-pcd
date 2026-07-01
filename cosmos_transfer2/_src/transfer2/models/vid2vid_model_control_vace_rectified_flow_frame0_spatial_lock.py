@@ -412,7 +412,11 @@ class ControlVideo2WorldModelRectifiedFlowFrame0SpatialLock(Video2WorldModelRect
             x_sigma_mask = x0_spatial_condition["x_sigma_mask"]
             step_threshold = x0_spatial_condition["step_threshold"]
             frame0_hard_clamp = x0_spatial_condition.get("frame0_hard_clamp", False)
-            frame0_visible_strength = x0_spatial_condition.get("frame0_visible_strength", 1.0)
+            frame0_core_strength = x0_spatial_condition.get(
+                "frame0_core_strength", x0_spatial_condition.get("frame0_visible_strength", 1.0)
+            )
+            frame0_boundary_strength = x0_spatial_condition.get("frame0_boundary_strength", frame0_core_strength)
+            frame0_boundary_width = x0_spatial_condition.get("frame0_boundary_width", 0)
             frame0_blend_until_step = x0_spatial_condition.get("frame0_blend_until_step", None)
 
         use_spatial_split = False
@@ -447,7 +451,25 @@ class ControlVideo2WorldModelRectifiedFlowFrame0SpatialLock(Video2WorldModelRect
         def clamp_frame0_visible_region(x: torch.Tensor) -> torch.Tensor:
             if x0_spatial_condition is None or not frame0_hard_clamp:
                 return x
-            spatial_strength = (x_sigma_mask * frame0_visible_strength).clamp(0.0, 1.0)
+            visible_mask = (x_sigma_mask > 0.5).to(dtype=x.dtype)
+            boundary_width = int(frame0_boundary_width)
+            if boundary_width > 0:
+                B, C, T, H, W = visible_mask.shape
+                flat_visible = visible_mask.reshape(B * C * T, 1, H, W)
+                kernel_size = boundary_width * 2 + 1
+                core_mask = -torch.nn.functional.max_pool2d(
+                    -flat_visible,
+                    kernel_size=kernel_size,
+                    stride=1,
+                    padding=boundary_width,
+                )
+                core_mask = core_mask.reshape(B, C, T, H, W)
+            else:
+                core_mask = visible_mask
+            boundary_mask = (visible_mask - core_mask).clamp(0.0, 1.0)
+            spatial_strength = (
+                core_mask * frame0_core_strength + boundary_mask * frame0_boundary_strength
+            ).clamp(0.0, 1.0)
             return x0 * spatial_strength + x * (1 - spatial_strength)
 
         latents = clamp_frame0_visible_region(latents)

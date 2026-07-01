@@ -61,8 +61,14 @@ class Args(pydantic.BaseModel):
 
     control: ControlUnion = EdgeConfig()
     """Control help. Run control:edge --help for more information about edge etc."""
-    frame0_visible_strength: float = 0.98
-    """Strength for blending the known frame0 visible latent into generation. Use 1.0 for hard lock."""
+    frame0_visible_strength: float | None = None
+    """Deprecated alias for frame0_core_strength."""
+    frame0_core_strength: float = 1.0
+    """Strength for preserving the interior of the known frame0 visible region."""
+    frame0_boundary_strength: float = 0.8
+    """Strength for preserving the transition band around the frame0 visible region."""
+    frame0_boundary_width: int = 1
+    """Boundary width in latent cells between the visible core and generated region."""
     frame0_blend_until_step: int = 20
     """Last denoising step index that applies frame0 visible-region blending."""
 
@@ -82,12 +88,20 @@ def main(
 
     inference = Control2WorldInferenceFrame0SpatialLock(args.setup, batch_hint_keys=batch_hint_keys)
     inference.inference_pipeline.force_hardlock_first_chunk = False
-    inference.inference_pipeline.frame0_visible_strength = args.frame0_visible_strength
+    frame0_core_strength = (
+        args.frame0_visible_strength if args.frame0_visible_strength is not None else args.frame0_core_strength
+    )
+    inference.inference_pipeline.frame0_core_strength = frame0_core_strength
+    inference.inference_pipeline.frame0_boundary_strength = args.frame0_boundary_strength
+    inference.inference_pipeline.frame0_boundary_width = args.frame0_boundary_width
     inference.inference_pipeline.frame0_blend_until_step = args.frame0_blend_until_step
     log.info("First-chunk hard lock is disabled and frame0 spatial lock is enabled for this inference entry point.")
     log.info(
         "Frame0 spatial lock settings: "
-        f"visible_strength={args.frame0_visible_strength}, blend_until_step={args.frame0_blend_until_step}"
+        f"core_strength={frame0_core_strength}, "
+        f"boundary_strength={args.frame0_boundary_strength}, "
+        f"boundary_width={args.frame0_boundary_width}, "
+        f"blend_until_step={args.frame0_blend_until_step}"
     )
     inference.generate(inference_samples, output_dir=args.setup.output_dir)
 

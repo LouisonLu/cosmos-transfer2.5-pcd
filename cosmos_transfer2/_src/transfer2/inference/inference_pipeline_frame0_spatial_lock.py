@@ -585,7 +585,9 @@ class ControlVideo2WorldInferenceFrame0SpatialLock:
                                 "x_sigma_mask": x_sigma_mask,
                                 "step_threshold": guided_generation_step_threshold,
                                 "frame0_hard_clamp": True,
-                                "frame0_visible_strength": getattr(self, "frame0_visible_strength", 0.98),
+                                "frame0_core_strength": getattr(self, "frame0_core_strength", 1.0),
+                                "frame0_boundary_strength": getattr(self, "frame0_boundary_strength", 0.8),
+                                "frame0_boundary_width": getattr(self, "frame0_boundary_width", 1),
                                 "frame0_blend_until_step": getattr(self, "frame0_blend_until_step", 20),
                             }
 
