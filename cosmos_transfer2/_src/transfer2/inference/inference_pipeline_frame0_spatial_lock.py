@@ -585,6 +585,7 @@ class ControlVideo2WorldInferenceFrame0SpatialLock:
                                 "x_sigma_mask": x_sigma_mask,
                                 "step_threshold": guided_generation_step_threshold,
                                 "frame0_hard_clamp": True,
+                                "frame0_visible_strength": 0.98,
                             }
 
                 if isinstance(text_embeddings, list):

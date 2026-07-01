@@ -412,6 +412,7 @@ class ControlVideo2WorldModelRectifiedFlowFrame0SpatialLock(Video2WorldModelRect
             x_sigma_mask = x0_spatial_condition["x_sigma_mask"]
             step_threshold = x0_spatial_condition["step_threshold"]
             frame0_hard_clamp = x0_spatial_condition.get("frame0_hard_clamp", False)
+            frame0_visible_strength = x0_spatial_condition.get("frame0_visible_strength", 1.0)
 
         use_spatial_split = False
         if self.net.is_context_parallel_enabled:
@@ -445,7 +446,8 @@ class ControlVideo2WorldModelRectifiedFlowFrame0SpatialLock(Video2WorldModelRect
         def clamp_frame0_visible_region(x: torch.Tensor) -> torch.Tensor:
             if x0_spatial_condition is None or not frame0_hard_clamp:
                 return x
-            return x0 * x_sigma_mask + x * (1 - x_sigma_mask)
+            spatial_strength = (x_sigma_mask * frame0_visible_strength).clamp(0.0, 1.0)
+            return x0 * spatial_strength + x * (1 - spatial_strength)
 
         if INTERNAL:
             timesteps_iter = timesteps
@@ -460,7 +462,7 @@ class ControlVideo2WorldModelRectifiedFlowFrame0SpatialLock(Video2WorldModelRect
             if x0_spatial_condition is not None and frame0_hard_clamp:
                 latent_model_input = clamp_frame0_visible_region(latent_model_input)
                 if get_rank() == 0:
-                    log.debug(f"denoising with frame0 spatial hard clamp at step {num_step}")
+                    log.debug(f"denoising with frame0 spatial strength blend at step {num_step}")
             elif x0_spatial_condition is not None and num_step <= step_threshold:
                 sigma = sigmas[num_step]
                 cur_x0 = x0 * (1 - sigma) + noise * sigma
