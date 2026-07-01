@@ -467,10 +467,11 @@ class ControlVideo2WorldModelRectifiedFlowFrame0SpatialLock(Video2WorldModelRect
                 and frame0_hard_clamp
                 and (frame0_blend_until_step is None or num_step <= frame0_blend_until_step)
             )
-            if should_blend_frame0:
-                latent_model_input = clamp_frame0_visible_region(latent_model_input)
-                if get_rank() == 0:
-                    log.debug(f"denoising with frame0 spatial strength blend at step {num_step}")
+            if x0_spatial_condition is not None and frame0_hard_clamp:
+                if should_blend_frame0:
+                    latent_model_input = clamp_frame0_visible_region(latent_model_input)
+                    if get_rank() == 0:
+                        log.debug(f"denoising with frame0 spatial strength blend at step {num_step}")
             elif x0_spatial_condition is not None and num_step <= step_threshold:
                 sigma = sigmas[num_step]
                 cur_x0 = x0 * (1 - sigma) + noise * sigma
