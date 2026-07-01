@@ -413,6 +413,7 @@ class ControlVideo2WorldModelRectifiedFlowFrame0SpatialLock(Video2WorldModelRect
             step_threshold = x0_spatial_condition["step_threshold"]
             frame0_hard_clamp = x0_spatial_condition.get("frame0_hard_clamp", False)
             frame0_visible_strength = x0_spatial_condition.get("frame0_visible_strength", 1.0)
+            frame0_blend_until_step = x0_spatial_condition.get("frame0_blend_until_step", None)
 
         use_spatial_split = False
         if self.net.is_context_parallel_enabled:
@@ -461,7 +462,12 @@ class ControlVideo2WorldModelRectifiedFlowFrame0SpatialLock(Video2WorldModelRect
             timestep = [t]
 
             timestep = torch.stack(timestep)
-            if x0_spatial_condition is not None and frame0_hard_clamp:
+            should_blend_frame0 = (
+                x0_spatial_condition is not None
+                and frame0_hard_clamp
+                and (frame0_blend_until_step is None or num_step <= frame0_blend_until_step)
+            )
+            if should_blend_frame0:
                 latent_model_input = clamp_frame0_visible_region(latent_model_input)
                 if get_rank() == 0:
                     log.debug(f"denoising with frame0 spatial strength blend at step {num_step}")
@@ -477,7 +483,7 @@ class ControlVideo2WorldModelRectifiedFlowFrame0SpatialLock(Video2WorldModelRect
                 velocity_pred.unsqueeze(0), t, latents[0].unsqueeze(0), return_dict=False, generator=seed_g
             )[0]
             latents = temp_x0.squeeze(0)
-            if x0_spatial_condition is not None and frame0_hard_clamp:
+            if should_blend_frame0:
                 latents = clamp_frame0_visible_region(latents)
 
         if self.net.is_context_parallel_enabled:

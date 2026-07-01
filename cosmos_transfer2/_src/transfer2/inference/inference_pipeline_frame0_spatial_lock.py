@@ -586,6 +586,7 @@ class ControlVideo2WorldInferenceFrame0SpatialLock:
                                 "step_threshold": guided_generation_step_threshold,
                                 "frame0_hard_clamp": True,
                                 "frame0_visible_strength": 0.98,
+                                "frame0_blend_until_step": 20,
                             }
 
                 if isinstance(text_embeddings, list):
