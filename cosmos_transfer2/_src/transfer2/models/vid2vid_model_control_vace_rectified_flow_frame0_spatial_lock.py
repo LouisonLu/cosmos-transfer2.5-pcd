@@ -449,6 +449,8 @@ class ControlVideo2WorldModelRectifiedFlowFrame0SpatialLock(Video2WorldModelRect
             spatial_strength = (x_sigma_mask * frame0_visible_strength).clamp(0.0, 1.0)
             return x0 * spatial_strength + x * (1 - spatial_strength)
 
+        latents = clamp_frame0_visible_region(latents)
+
         if INTERNAL:
             timesteps_iter = timesteps
         else:
