@@ -61,6 +61,10 @@ class Args(pydantic.BaseModel):
 
     control: ControlUnion = EdgeConfig()
     """Control help. Run control:edge --help for more information about edge etc."""
+    frame0_visible_strength: float = 0.98
+    """Strength for blending the known frame0 visible latent into generation. Use 1.0 for hard lock."""
+    frame0_blend_until_step: int = 20
+    """Last denoising step index that applies frame0 visible-region blending."""
 
 
 def main(
@@ -78,7 +82,13 @@ def main(
 
     inference = Control2WorldInferenceFrame0SpatialLock(args.setup, batch_hint_keys=batch_hint_keys)
     inference.inference_pipeline.force_hardlock_first_chunk = False
+    inference.inference_pipeline.frame0_visible_strength = args.frame0_visible_strength
+    inference.inference_pipeline.frame0_blend_until_step = args.frame0_blend_until_step
     log.info("First-chunk hard lock is disabled and frame0 spatial lock is enabled for this inference entry point.")
+    log.info(
+        "Frame0 spatial lock settings: "
+        f"visible_strength={args.frame0_visible_strength}, blend_until_step={args.frame0_blend_until_step}"
+    )
     inference.generate(inference_samples, output_dir=args.setup.output_dir)
 
 
