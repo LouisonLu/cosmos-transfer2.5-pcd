@@ -3,21 +3,21 @@
 
 """Config wrapper for isolated first-frame partial hardlock inference."""
 
-import cosmos_transfer2.experiments.singleview.cosmos_singleview_partical_hardlock  # noqa: F401
+import cosmos_transfer2.experiments.singleview.cosmos_singleview_partial_hardlock  # noqa: F401
 
 from cosmos_transfer2._src.transfer2.configs.vid2vid_transfer.config import make_config as _make_config
 from cosmos_transfer2._src.transfer2.configs.vid2vid_transfer.defaults.dataloader_local_mask import (
     register_dataloader_local_mask,
 )
-from cosmos_transfer2._src.transfer2.configs.vid2vid_transfer.defaults.model_partical_hardlock import (
-    register_model_partical_hardlock,
+from cosmos_transfer2._src.transfer2.configs.vid2vid_transfer.defaults.model_partial_hardlock import (
+    register_model_partial_hardlock,
 )
 
 
 def make_config():
     config = _make_config()
     register_dataloader_local_mask()
-    register_model_partical_hardlock()
+    register_model_partial_hardlock()
     return config
 
 

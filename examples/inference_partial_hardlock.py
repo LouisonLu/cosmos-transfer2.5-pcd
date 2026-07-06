@@ -72,9 +72,9 @@ def main(
         # assert len(inference_samples) > 1, "Benchmarking must be run for more than 1 sample."
     init_output_dir(args.setup.output_dir, profile=args.setup.profile)
 
-    from cosmos_transfer2.inference_partical_hardlock import Control2WorldInferenceParticalHardlock
+    from cosmos_transfer2.inference_partial_hardlock import Control2WorldInferencePartialHardlock
 
-    inference = Control2WorldInferenceParticalHardlock(args.setup, batch_hint_keys=batch_hint_keys)
+    inference = Control2WorldInferencePartialHardlock(args.setup, batch_hint_keys=batch_hint_keys)
     inference.generate(inference_samples, output_dir=args.setup.output_dir)
 
 

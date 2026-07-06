@@ -24,8 +24,8 @@ from cosmos_transfer2._src.imaginaire.lazy_config.lazy import LazyConfig
 from cosmos_transfer2._src.imaginaire.utils import distributed, log, misc
 from cosmos_transfer2._src.imaginaire.visualize.video import save_img_or_video
 from cosmos_transfer2._src.transfer2.configs.vid2vid_transfer.experiment.experiment_list import EXPERIMENTS
-from cosmos_transfer2._src.transfer2.inference.inference_pipeline_partical_hardlock import (
-    ControlVideo2WorldInferenceParticalHardlock,
+from cosmos_transfer2._src.transfer2.inference.inference_pipeline_partial_hardlock import (
+    ControlVideo2WorldInferencePartialHardlock,
 )
 from cosmos_transfer2._src.transfer2.inference.utils import compile_tokenizer_if_enabled
 from cosmos_transfer2.config import (
@@ -39,7 +39,7 @@ from cosmos_transfer2.config import (
 )
 
 
-class Control2WorldInferenceParticalHardlock:
+class Control2WorldInferencePartialHardlock:
     def __init__(
         self,
         args: SetupArguments,
@@ -123,7 +123,7 @@ class Control2WorldInferenceParticalHardlock:
             exp_override_opts = EXPERIMENTS[self.experiment].command_args.copy()
 
         # Initialize the inference pipeline - same class for both distilled and non-distilled
-        self.inference_pipeline = ControlVideo2WorldInferenceParticalHardlock(
+        self.inference_pipeline = ControlVideo2WorldInferencePartialHardlock(
             # pyrefly: ignore [bad-argument-type]
             registered_exp_name=registered_exp_name,
             checkpoint_paths=self.checkpoint_list,

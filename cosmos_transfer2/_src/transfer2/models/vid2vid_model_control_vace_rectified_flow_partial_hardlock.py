@@ -52,7 +52,7 @@ IS_PREPROCESSED_KEY = "is_preprocessed"
 
 
 @attrs.define(slots=False)
-class ControlVideo2WorldRectifiedFlowParticalHardlockConfig(Video2WorldModelRectifiedFlowConfig):
+class ControlVideo2WorldRectifiedFlowPartialHardlockConfig(Video2WorldModelRectifiedFlowConfig):
     base_load_from: LazyDict = None
     freeze_base_model: bool = True  # Whether to freeze the base model during control training
     min_num_conditional_frames: int = 0  # Minimum number of latent conditional frames
@@ -64,12 +64,12 @@ class ControlVideo2WorldRectifiedFlowParticalHardlockConfig(Video2WorldModelRect
     use_reference_image: bool = False  # Whether to use reference image as control input
 
 
-class ControlVideo2WorldModelRectifiedFlowParticalHardlock(Video2WorldModelRectifiedFlow):
+class ControlVideo2WorldModelRectifiedFlowPartialHardlock(Video2WorldModelRectifiedFlow):
     """
     ImaginaireModel instance of the VACE-styled controlnet for training.
     """
 
-    def __init__(self, config: ControlVideo2WorldRectifiedFlowParticalHardlockConfig, *args, **kwargs):
+    def __init__(self, config: ControlVideo2WorldRectifiedFlowPartialHardlockConfig, *args, **kwargs):
         self.is_new_training = True
         self.copy_weight_strategy = config.copy_weight_strategy
         self.hint_keys = ["control_input_" + key for key in config.hint_keys.split("_")]

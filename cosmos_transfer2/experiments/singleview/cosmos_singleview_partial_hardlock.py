@@ -13,17 +13,17 @@ DEFAULT_DEPTH_MODEL_KEY = ModelKey(variant=ModelVariant.DEPTH)
 DEPTH_CHECKPOINT = MODEL_CHECKPOINTS[DEFAULT_DEPTH_MODEL_KEY]
 
 
-transfer2_singleview_partical_hardlock_pcd_rgb_image_context_example = dict(
+transfer2_singleview_partial_hardlock_pcd_rgb_image_context_example = dict(
     defaults=[
         DEFAULT_BASE_EXPERIMENT,
-        {"override /model": "fsdp_control_vace_rectified_flow_partical_hardlock"},
+        {"override /model": "fsdp_control_vace_rectified_flow_partial_hardlock"},
         {"override /data_train": "example_singleview_train_data_depth_mask"},
         {"override /conditioner": "video_prediction_control_conditioner_image_context"},
     ],
     job=dict(
         project="cosmos_transfer2_posttrain",
         group="local_single_view",
-        name="transfer2_singleview_partical_hardlock_pcd_rgb_image_context_example",
+        name="transfer2_singleview_partial_hardlock_pcd_rgb_image_context_example",
     ),
     checkpoint=dict(
         save_iter=1000,
@@ -84,7 +84,7 @@ transfer2_singleview_partical_hardlock_pcd_rgb_image_context_example = dict(
 
 cs = ConfigStore.instance()
 
-for _item in [transfer2_singleview_partical_hardlock_pcd_rgb_image_context_example]:
+for _item in [transfer2_singleview_partial_hardlock_pcd_rgb_image_context_example]:
     _name: str = _item["job"]["name"]  # pyrefly: ignore
     cs.store(
         group="experiment",

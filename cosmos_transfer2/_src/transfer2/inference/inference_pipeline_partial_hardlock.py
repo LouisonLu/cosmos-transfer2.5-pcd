@@ -53,7 +53,7 @@ def _maybe_get_timer(
     return benchmark_timer(func_name) if benchmark_timer is not None else contextlib.nullcontext()
 
 
-class ControlVideo2WorldInferenceParticalHardlock:
+class ControlVideo2WorldInferencePartialHardlock:
     """
     Handles the Control2Video inference process, including model loading, data preparation,
     and video transfer from an input video and text prompt.
