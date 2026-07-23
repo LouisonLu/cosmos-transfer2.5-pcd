@@ -213,6 +213,7 @@ class SingleViewTransferDatasetMask(Dataset):
         self.image_context_mask_fill_value = image_context_mask_fill_value
         self.image_context_mask_reference_path = image_context_mask_reference_path
         self.image_context_mask_reference_threshold = image_context_mask_reference_threshold
+        self.use_reference_mask = self.image_context_mask_reference_path is not None
         self._image_context_reference_keep_mask: np.ndarray | None = None
 
         if not 0.0 < self.image_context_keep_ratio <= 1.0:
@@ -226,14 +227,12 @@ class SingleViewTransferDatasetMask(Dataset):
             "random_rectangles",
             "random_pixels",
         }
-        if self.image_context_mask_mode not in valid_mask_modes:
+        if not self.use_reference_mask and self.image_context_mask_mode not in valid_mask_modes:
             raise ValueError(
                 f"Unsupported image_context_mask_mode: {self.image_context_mask_mode}. "
                 f"Supported modes: {sorted(valid_mask_modes)}"
             )
-        if self.image_context_mask_reference_path is not None and not os.path.exists(
-            self.image_context_mask_reference_path
-        ):
+        if self.use_reference_mask and not os.path.exists(self.image_context_mask_reference_path):
             raise FileNotFoundError(
                 f"Image context mask reference not found: {self.image_context_mask_reference_path}"
             )
@@ -329,14 +328,20 @@ class SingleViewTransferDatasetMask(Dataset):
         if self.use_image_context:
             log.info("  Image context: enabled")
             if self.mask_image_context:
-                log.info(
-                    "  Image context mask: "
-                    f"mode={self.image_context_mask_mode}, "
-                    f"keep_ratio={self.image_context_keep_ratio}, "
-                    f"fill={self.image_context_mask_fill_value}"
-                )
-                if self.image_context_mask_reference_path is not None:
-                    log.info(f"  Image context mask reference: {self.image_context_mask_reference_path}")
+                if self.use_reference_mask:
+                    log.info(
+                        "  Image context mask: "
+                        f"reference_path={self.image_context_mask_reference_path}, "
+                        f"threshold={self.image_context_mask_reference_threshold}, "
+                        f"fill={self.image_context_mask_fill_value}"
+                    )
+                else:
+                    log.info(
+                        "  Image context mask: "
+                        f"mode={self.image_context_mask_mode}, "
+                        f"keep_ratio={self.image_context_keep_ratio}, "
+                        f"fill={self.image_context_mask_fill_value}"
+                    )
         if self.input_video_dir:
             log.info(f"  Input video dir: {self.input_video_dir}")
 
