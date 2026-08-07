@@ -28,7 +28,13 @@ def register_dataloader_local_mask() -> None:
         use_image_context=True,
         image_context_from_rgb_first_frame=True,
         mask_image_context=True,
+        mask_depth_control=False,
         mask_mode="waymo",
+        mask_pool_root=None,
+        mask_pool_use_dynamic=False,
+        mask_pool_sampler_py=None,
+        mask_pool_sampler_seed=0,
+        mask_pool_sampler_kwargs_json=None,
     )
 
     cs.store(

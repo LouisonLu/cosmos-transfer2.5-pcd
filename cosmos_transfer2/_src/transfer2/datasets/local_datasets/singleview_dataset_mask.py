@@ -35,10 +35,11 @@ Example usage:
     )
 """
 
+import base64
+import importlib.util
 import json
 import os
 import pickle
-import base64
 import zlib
 from pathlib import Path
 from typing import Any
@@ -48,7 +49,7 @@ import torch
 import torch.nn.functional as F
 from decord import VideoReader, cpu
 from PIL import Image
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, get_worker_info
 
 from cosmos_transfer2._src.imaginaire.lazy_config import instantiate
 from cosmos_transfer2._src.imaginaire.utils import log
@@ -188,12 +189,18 @@ class SingleViewTransferDatasetMask(Dataset):
         use_image_context: bool = False,
         image_context_from_rgb_first_frame: bool = False,
         mask_image_context: bool = False,
+        mask_depth_control: bool = False,
         mask_mode: str | None = None,
         image_context_keep_ratio: float = 0.25,
         image_context_mask_mode: str = "fixed_vertical_band",
         image_context_mask_fill_value: int = 0,
         image_context_mask_reference_path: str | None = None,
         image_context_mask_reference_threshold: int = 5,
+        mask_pool_root: str | None = None,
+        mask_pool_use_dynamic: bool = False,
+        mask_pool_sampler_py: str | None = None,
+        mask_pool_sampler_seed: int = 0,
+        mask_pool_sampler_kwargs_json: str | dict[str, Any] | None = None,
         **kwargs,  # Accept extra params for config compatibility (like MultiviewTransferDataset)
     ) -> None:
         super().__init__()
@@ -208,6 +215,7 @@ class SingleViewTransferDatasetMask(Dataset):
         self.use_image_context = use_image_context
         self.image_context_from_rgb_first_frame = image_context_from_rgb_first_frame
         self.mask_image_context = mask_image_context
+        self.mask_depth_control = mask_depth_control
         self.image_context_keep_ratio = image_context_keep_ratio
         self.image_context_mask_mode = mask_mode or image_context_mask_mode
         self.image_context_mask_fill_value = image_context_mask_fill_value
@@ -215,6 +223,14 @@ class SingleViewTransferDatasetMask(Dataset):
         self.image_context_mask_reference_threshold = image_context_mask_reference_threshold
         self.use_reference_mask = self.image_context_mask_reference_path is not None
         self._image_context_reference_keep_mask: np.ndarray | None = None
+        self.mask_pool_root = mask_pool_root
+        self.mask_pool_use_dynamic = mask_pool_use_dynamic
+        self.mask_pool_sampler_py = mask_pool_sampler_py
+        self.mask_pool_sampler_seed = int(mask_pool_sampler_seed)
+        self.mask_pool_sampler_kwargs_json = mask_pool_sampler_kwargs_json
+        self._dynamic_mask_sampler = None
+        self._dynamic_mask_sampler_worker_id: int | None = None
+        self._static_mask_pool_paths: list[Path] = []
 
         if not 0.0 < self.image_context_keep_ratio <= 1.0:
             raise ValueError("image_context_keep_ratio must be in (0, 1].")
@@ -236,6 +252,18 @@ class SingleViewTransferDatasetMask(Dataset):
             raise FileNotFoundError(
                 f"Image context mask reference not found: {self.image_context_mask_reference_path}"
             )
+        if self.mask_pool_root:
+            if not os.path.isdir(self.mask_pool_root):
+                raise FileNotFoundError(f"mask_pool_root not found: {self.mask_pool_root}")
+            if self.mask_pool_use_dynamic:
+                if not self.mask_pool_sampler_py:
+                    raise ValueError("mask_pool_sampler_py must be set when mask_pool_use_dynamic=True")
+                if not os.path.exists(self.mask_pool_sampler_py):
+                    raise FileNotFoundError(f"mask_pool_sampler_py not found: {self.mask_pool_sampler_py}")
+            else:
+                self._static_mask_pool_paths = sorted(Path(self.mask_pool_root).rglob("*.png"))
+                if not self._static_mask_pool_paths:
+                    raise FileNotFoundError(f"No PNG masks found under mask_pool_root: {self.mask_pool_root}")
 
         # Parse control type from hint_key
         self.hint_key = hint_key
@@ -342,6 +370,18 @@ class SingleViewTransferDatasetMask(Dataset):
                         f"keep_ratio={self.image_context_keep_ratio}, "
                         f"fill={self.image_context_mask_fill_value}"
                     )
+        if self.mask_depth_control:
+            log.info("  Depth / PCD control masking: enabled")
+        if self.mask_pool_use_dynamic:
+            log.info(
+                "  Dynamic mask pool: "
+                f"root={self.mask_pool_root}, sampler={self.mask_pool_sampler_py}, seed={self.mask_pool_sampler_seed}"
+            )
+        elif self._static_mask_pool_paths:
+            log.info(
+                "  Static mask pool: "
+                f"root={self.mask_pool_root}, masks={len(self._static_mask_pool_paths)}, sampling=uniform"
+            )
         if self.input_video_dir:
             log.info(f"  Input video dir: {self.input_video_dir}")
 
@@ -451,16 +491,165 @@ class SingleViewTransferDatasetMask(Dataset):
         del vr
         return frame
 
-    def _mask_image_context(self, frame: np.ndarray) -> np.ndarray:
-        """Mask a first-frame image context while keeping a configured visible region."""
+    def _get_dynamic_mask_sampler(self) -> Any:
+        worker_info = get_worker_info()
+        worker_id = 0 if worker_info is None else int(worker_info.id)
+        if self._dynamic_mask_sampler is not None and self._dynamic_mask_sampler_worker_id == worker_id:
+            return self._dynamic_mask_sampler
+
+        assert self.mask_pool_sampler_py is not None
+        assert self.mask_pool_root is not None
+
+        module_name = f"_dynamic_mask_sampler_{worker_id}_{abs(hash(self.mask_pool_sampler_py))}"
+        spec = importlib.util.spec_from_file_location(module_name, self.mask_pool_sampler_py)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Unable to load mask sampler module from {self.mask_pool_sampler_py}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        sampler_cls = getattr(module, "MaskPoolSampler", None) or getattr(module, "MaskPoolSamplerV11", None)
+        if sampler_cls is None:
+            raise AttributeError(
+                f"Mask sampler module must define MaskPoolSampler or MaskPoolSamplerV11: {self.mask_pool_sampler_py}"
+            )
+
+        sampler_seed = self.mask_pool_sampler_seed + worker_id
+        sampler_kwargs = self._parse_mask_pool_sampler_kwargs()
+        self._dynamic_mask_sampler = sampler_cls(self.mask_pool_root, seed=sampler_seed, **sampler_kwargs)
+        self._dynamic_mask_sampler_worker_id = worker_id
+        return self._dynamic_mask_sampler
+
+    def _parse_mask_pool_sampler_kwargs(self) -> dict[str, Any]:
+        raw = self.mask_pool_sampler_kwargs_json
+        if raw is None:
+            return {}
+        if isinstance(raw, dict):
+            return dict(raw)
+        if not isinstance(raw, str):
+            raise TypeError(
+                "mask_pool_sampler_kwargs_json must be None, a JSON string, a JSON file path, or a dict."
+            )
+
+        text = raw.strip()
+        if not text:
+            return {}
+        if os.path.exists(text):
+            with open(text, encoding="utf-8") as f:
+                data = json.load(f)
+        else:
+            data = json.loads(text)
+        if not isinstance(data, dict):
+            raise ValueError("mask_pool_sampler_kwargs_json must resolve to a JSON object/dict.")
+        return data
+
+    def _sample_dynamic_mask(self) -> tuple[np.ndarray, dict[str, Any] | None]:
+        sampler = self._get_dynamic_mask_sampler()
+        sample = sampler.sample()
+        if isinstance(sample, tuple) and len(sample) == 2:
+            mask, meta = sample
+        else:
+            mask, meta = sample, None
+        mask = np.asarray(mask, dtype=np.uint8)
+        values = set(np.unique(mask).tolist())
+        if mask.ndim != 2 or not values.issubset({0, 255}):
+            raise ValueError(
+                f"Dynamic mask sampler returned invalid mask: shape={mask.shape}, values={sorted(values)}"
+            )
+        return mask, meta
+
+    def _sample_static_pool_mask(self) -> tuple[np.ndarray, dict[str, Any]]:
+        if not self._static_mask_pool_paths:
+            raise ValueError("Static mask pool is empty.")
+        idx = int(np.random.randint(0, len(self._static_mask_pool_paths)))
+        path = self._static_mask_pool_paths[idx]
+        with Image.open(path) as im:
+            mask = np.asarray(im.convert("L"), dtype=np.uint8)
+        values = set(np.unique(mask).tolist())
+        if mask.ndim != 2 or not values.issubset({0, 255}):
+            raise ValueError(f"Static mask pool returned invalid mask: path={path}, shape={mask.shape}, values={sorted(values)}")
+        return mask, {"path": str(path), "sampling": "uniform"}
+
+    def _resize_keep_mask(self, keep_mask: np.ndarray, height: int, width: int) -> np.ndarray:
+        keep_mask = keep_mask.astype(bool, copy=False)
+        if keep_mask.shape == (height, width):
+            return keep_mask
+        keep_img = Image.fromarray(keep_mask.astype(np.uint8) * 255)
+        keep_img = keep_img.resize((width, height), Image.Resampling.NEAREST)
+        return np.asarray(keep_img, dtype=np.uint8) > 0
+
+    def _get_active_keep_mask(self, height: int, width: int, sampled_mask: np.ndarray | None = None) -> np.ndarray:
+        if sampled_mask is not None:
+            return self._resize_keep_mask(sampled_mask == 255, height, width)
+        if self.image_context_mask_reference_path is not None:
+            return self._get_reference_keep_mask(height, width)
+        keep_ratio = self.image_context_keep_ratio
+        if self.image_context_mask_mode == "fixed_vertical_band":
+            keep = np.zeros((height, width), dtype=bool)
+            keep_w = max(1, int(round(width * keep_ratio)))
+            x0 = max(0, (width - keep_w) // 2)
+            keep[:, x0 : x0 + keep_w] = True
+            return keep
+        if self.image_context_mask_mode == "fixed_horizontal_band":
+            keep = np.zeros((height, width), dtype=bool)
+            keep_h = max(1, int(round(height * keep_ratio)))
+            y0 = max(0, (height - keep_h) // 2)
+            keep[y0 : y0 + keep_h, :] = True
+            return keep
+        if self.image_context_mask_mode == "fixed_center":
+            keep = np.zeros((height, width), dtype=bool)
+            side_ratio = keep_ratio**0.5
+            keep_h = max(1, int(round(height * side_ratio)))
+            keep_w = max(1, int(round(width * side_ratio)))
+            y0 = max(0, (height - keep_h) // 2)
+            x0 = max(0, (width - keep_w) // 2)
+            keep[y0 : y0 + keep_h, x0 : x0 + keep_w] = True
+            return keep
+        if self.image_context_mask_mode == "random_pixels":
+            return np.random.random((height, width)) < keep_ratio
+        if self.image_context_mask_mode in {"waymo", "front_rear_luma_erp"}:
+            return self._get_waymo_keep_mask(height, width)
+        if self.image_context_mask_mode == "random_rectangles":
+            keep = np.zeros((height, width), dtype=bool)
+            target_pixels = int(round(height * width * keep_ratio))
+            attempts = 0
+            while keep.sum() < target_pixels and attempts < 64:
+                rect_h = np.random.randint(max(1, height // 8), max(2, height // 2))
+                rect_w = np.random.randint(max(1, width // 8), max(2, width // 2))
+                y0 = np.random.randint(0, max(1, height - rect_h + 1))
+                x0 = np.random.randint(0, max(1, width - rect_w + 1))
+                keep[y0 : y0 + rect_h, x0 : x0 + rect_w] = True
+                attempts += 1
+            if keep.sum() > target_pixels:
+                ys, xs = np.where(keep)
+                drop_count = int(keep.sum() - target_pixels)
+                if drop_count > 0:
+                    drop_idx = np.random.choice(len(ys), size=drop_count, replace=False)
+                    keep[ys[drop_idx], xs[drop_idx]] = False
+            return keep
+        raise ValueError(
+            "No mask source available. Use a reference mask, a dynamic mask pool, or a supported built-in mask mode."
+        )
+
+    def _apply_keep_mask_to_frame(self, frame: np.ndarray, keep_mask: np.ndarray) -> np.ndarray:
         masked = np.full_like(frame, np.clip(self.image_context_mask_fill_value, 0, 255))
+        masked[keep_mask] = frame[keep_mask]
+        return masked.astype(np.uint8, copy=False)
+
+    def _apply_keep_mask_to_video_frames(self, frames: np.ndarray, keep_mask: np.ndarray) -> np.ndarray:
+        masked = np.full_like(frames, np.clip(self.image_context_mask_fill_value, 0, 255))
+        masked[:, keep_mask] = frames[:, keep_mask]
+        return masked.astype(np.uint8, copy=False)
+
+    def _mask_image_context(self, frame: np.ndarray, sampled_mask: np.ndarray | None = None) -> np.ndarray:
+        """Mask a first-frame image context while keeping a configured visible region."""
         h, w = frame.shape[:2]
         keep_ratio = self.image_context_keep_ratio
 
-        if self.image_context_mask_reference_path is not None:
-            keep = self._get_reference_keep_mask(h, w)
-            masked[keep] = frame[keep]
-            return masked.astype(np.uint8, copy=False)
+        if self.mask_pool_use_dynamic or self.image_context_mask_reference_path is not None:
+            keep = self._get_active_keep_mask(h, w, sampled_mask=sampled_mask)
+            return self._apply_keep_mask_to_frame(frame, keep)
+
+        masked = np.full_like(frame, np.clip(self.image_context_mask_fill_value, 0, 255))
 
         if self.image_context_mask_mode == "fixed_vertical_band":
             keep_w = max(1, int(round(w * keep_ratio)))
@@ -566,7 +755,12 @@ class SingleViewTransferDatasetMask(Dataset):
 
     # Captions are now encoded on-the-fly by the model's text encoder (Qwen/reason1p1_7B)
 
-    def _load_control_data(self, video_name: str, frame_ids: list[int]) -> dict[str, Any] | None:
+    def _load_control_data(
+        self,
+        video_name: str,
+        frame_ids: list[int],
+        sampled_mask: np.ndarray | None = None,
+    ) -> dict[str, Any] | None:
         """Load control input data (depth, segmentation, etc.).
 
         For edge/vis, returns None (computed on-the-fly by augmentor).
@@ -630,6 +824,13 @@ class SingleViewTransferDatasetMask(Dataset):
 
                 depth_frames = vr.get_batch(frame_ids).asnumpy()  # [T, H, W, C]
                 depth_frames = depth_frames.astype(np.uint8)
+                if self.mask_depth_control:
+                    keep = self._get_active_keep_mask(
+                        depth_frames.shape[1],
+                        depth_frames.shape[2],
+                        sampled_mask=sampled_mask,
+                    )
+                    depth_frames = self._apply_keep_mask_to_video_frames(depth_frames, keep)
                 # Convert to tensor - augmentor will handle resizing to match video
                 depth_t = torch.from_numpy(depth_frames).permute(0, 3, 1, 2)  # (T, C, H, W) uint8
                 depth_video = depth_t.permute(1, 0, 2, 3)  # (C, T, H, W) uint8
@@ -704,6 +905,12 @@ class SingleViewTransferDatasetMask(Dataset):
                     "n_orig_video_frames": len(frame_ids),
                 }
 
+                sampled_mask = None
+                if self.mask_pool_use_dynamic:
+                    sampled_mask, _ = self._sample_dynamic_mask()
+                elif self._static_mask_pool_paths:
+                    sampled_mask, _ = self._sample_static_pool_mask()
+
                 # Optional: load separate input video (e.g., PCD) aligned to target frames
                 if self.input_video_dir is not None:
                     input_video_path = self.input_video_paths.get(video_name)
@@ -713,6 +920,13 @@ class SingleViewTransferDatasetMask(Dataset):
                         )
                     input_frames, _, _ = self._load_video(input_video_path, frame_ids=frame_ids)
                     input_frames = input_frames.astype(np.uint8)
+                    if self.mask_depth_control and self.ctrl_type == "depth":
+                        keep = self._get_active_keep_mask(
+                            input_frames.shape[1],
+                            input_frames.shape[2],
+                            sampled_mask=sampled_mask,
+                        )
+                        input_frames = self._apply_keep_mask_to_video_frames(input_frames, keep)
                     input_frames_t = torch.from_numpy(input_frames).permute(0, 3, 1, 2)  # (T, C, H, W)
                     data["input_video"] = input_frames_t.permute(1, 0, 2, 3)  # (C, T, H, W)
 
@@ -720,7 +934,7 @@ class SingleViewTransferDatasetMask(Dataset):
                 if self.use_image_context and self.image_context_from_rgb_first_frame:
                     first_frame = self._load_first_frame(video_path)
                     if self.mask_image_context:
-                        first_frame = self._mask_image_context(first_frame)
+                        first_frame = self._mask_image_context(first_frame, sampled_mask=sampled_mask)
                     data["image_context"] = torch.from_numpy(first_frame).permute(2, 0, 1).to(torch.uint8)
 
                 # Load caption
@@ -760,7 +974,7 @@ class SingleViewTransferDatasetMask(Dataset):
                 data["__key__"] = video_name
 
                 # Load control input data (if pre-computed)
-                ctrl_data = self._load_control_data(video_name, frame_ids)
+                ctrl_data = self._load_control_data(video_name, frame_ids, sampled_mask=sampled_mask)
                 if ctrl_data is not None:
                     data.update(ctrl_data)
 
