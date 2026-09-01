@@ -78,8 +78,6 @@ transfer2_singleview_posttrain_pcd_masked_rgb_target_loss_mask = dict(
             heart_beat=dict(save_s3=False),
             iter_speed=dict(save_s3=False),
             device_monitor=dict(save_s3=False),
-            every_n_sample_reg=None,
-            every_n_sample_ema=None,
             wandb=dict(save_s3=False),
             wandb_10x=dict(save_s3=False),
             dataloader_speed=dict(save_s3=False),
