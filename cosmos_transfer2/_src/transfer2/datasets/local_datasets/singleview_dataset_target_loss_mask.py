@@ -24,7 +24,9 @@ class SingleViewTransferDatasetTargetLossMask(SingleViewTransferDatasetMask):
     The parent dataset retains the established RGB, PCD, image-context, and text
     pipeline. This subclass adds a strict one-to-one target mask and prompt
     mapping, aligns the mask using the augmentation result, and exposes it as
-    ``target_loss_mask`` with shape ``(1, T, H, W)``.
+    ``target_loss_mask`` with shape ``(1, T, H, W)``. Pair and pixel checks
+    are diagnostic: incomplete or unreadable samples are skipped instead of
+    terminating a distributed training run.
     """
 
     def __init__(
@@ -46,6 +48,7 @@ class SingleViewTransferDatasetTargetLossMask(SingleViewTransferDatasetMask):
         masked_input_black_threshold: int = 24,
         max_invalid_nonblack_ratio: float = 0.05,
         validate_file_pairs: bool = True,
+        max_target_loss_mask_retries: int = 10,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -58,6 +61,8 @@ class SingleViewTransferDatasetTargetLossMask(SingleViewTransferDatasetMask):
             raise ValueError("max_invalid_nonblack_ratio must be in [0, 1]")
         if target_loss_mask_aspect_ratio_tolerance < 0.0:
             raise ValueError("target_loss_mask_aspect_ratio_tolerance must be non-negative")
+        if max_target_loss_mask_retries < 1:
+            raise ValueError("max_target_loss_mask_retries must be at least 1")
 
         self.target_loss_mask_threshold = int(target_loss_mask_threshold)
         self.target_loss_mask_white_is_valid = bool(target_loss_mask_white_is_valid)
@@ -70,6 +75,7 @@ class SingleViewTransferDatasetTargetLossMask(SingleViewTransferDatasetMask):
         self.strict_masked_control_validation = bool(strict_masked_control_validation)
         self.masked_input_black_threshold = int(masked_input_black_threshold)
         self.max_invalid_nonblack_ratio = float(max_invalid_nonblack_ratio)
+        self.max_target_loss_mask_retries = int(max_target_loss_mask_retries)
 
         self.target_loss_mask_root = self._resolve_dataset_path(target_loss_mask_dir)
         self.prompt_root = self._resolve_dataset_path(prompt_dir)
@@ -84,6 +90,8 @@ class SingleViewTransferDatasetTargetLossMask(SingleViewTransferDatasetMask):
 
         if validate_file_pairs:
             self._validate_required_file_pairs()
+
+        self._video_indices_by_name = {Path(path).stem: index for index, path in enumerate(self.video_paths)}
 
         log.info("Initialized isolated target-loss-mask dataset")
         log.info(f"  Target masks: {self.target_loss_mask_root} (*{target_loss_mask_suffix}.mp4)")
@@ -106,43 +114,51 @@ class SingleViewTransferDatasetTargetLossMask(SingleViewTransferDatasetMask):
         return candidate if candidate.is_absolute() else Path(self.dataset_dir) / candidate
 
     def _validate_required_file_pairs(self) -> None:
-        missing_masks = [str(path) for path in self.target_loss_mask_paths.values() if not path.is_file()]
-        missing_prompts = [str(path) for path in self.prompt_paths.values() if not path.is_file()]
-        invalid_prompts: list[str] = []
-        if not missing_prompts:
-            for video_name, prompt_path in self.prompt_paths.items():
+        """Filter incomplete pairs and report them without aborting the run."""
+        valid_paths: list[str] = []
+        skipped: list[tuple[str, str]] = []
+
+        for video_path in self.video_paths:
+            video_name = Path(video_path).stem
+            reasons: list[str] = []
+            mask_path = self.target_loss_mask_paths[video_name]
+            prompt_path = self.prompt_paths[video_name]
+            if not mask_path.is_file():
+                reasons.append(f"missing mask: {mask_path}")
+            if not prompt_path.is_file():
+                reasons.append(f"missing prompt: {prompt_path}")
+            elif not reasons:
                 try:
                     self._load_caption(video_name)
                 except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
-                    invalid_prompts.append(f"{prompt_path}: {error}")
+                    reasons.append(f"invalid prompt: {error}")
 
-        missing_controls: list[str] = []
-        if self.control_video_dir_override is None:
-            missing_controls.append(
-                "control_video_dir_override is not configured; a paired masked PCD video is required"
-            )
-        else:
-            for video_path in self.video_paths:
-                video_name = Path(video_path).stem
+            if self.control_video_dir_override is None:
+                reasons.append("PCD/control directory is not configured")
+            else:
                 control_path = Path(self.control_video_dir_override) / (
                     f"{video_name}{self.control_video_suffix}.{self.ctrl_config['format']}"
                 )
                 if not control_path.is_file():
-                    missing_controls.append(str(control_path))
+                    reasons.append(f"missing PCD/control: {control_path}")
 
-        failures = {
-            "target mask": missing_masks,
-            "prompt": missing_prompts,
-            "invalid prompt": invalid_prompts,
-            "PCD/control": missing_controls,
+            if reasons:
+                skipped.append((video_name, "; ".join(reasons)))
+            else:
+                valid_paths.append(video_path)
+
+        self.video_paths = valid_paths
+        self.input_video_paths = {
+            name: path for name, path in self.input_video_paths.items() if name in {Path(item).stem for item in valid_paths}
         }
-        messages = []
-        for label, paths in failures.items():
-            if paths:
-                preview = "\n    ".join(paths[:5])
-                messages.append(f"{label}: missing {len(paths)}\n    {preview}")
-        if messages:
-            raise FileNotFoundError("Required training pairs are incomplete:\n" + "\n".join(messages))
+        if skipped:
+            log.warning(
+                f"Skipping {len(skipped)} incomplete target-loss-mask pairs; "
+                f"examples: {skipped[:5]}",
+                rank0_only=False,
+            )
+        if not self.video_paths:
+            raise RuntimeError("No complete target-loss-mask training pairs remain after filtering")
 
     def _load_caption(self, video_name: str) -> str:
         prompt_path = self.prompt_paths.get(video_name)
@@ -242,14 +258,34 @@ class SingleViewTransferDatasetTargetLossMask(SingleViewTransferDatasetMask):
             return
         ratio = self._invalid_nonblack_ratio(video_C_T_H_W, data, valid_mask)
         if ratio > self.max_invalid_nonblack_ratio:
-            raise ValueError(
-                f"{label} is not masked consistently with target_loss_mask for {data['__key__']}: "
+            log.warning(
+                f"{label} is not masked consistently with target_loss_mask for {data['__key__']}; "
                 f"invalid_nonblack_ratio={ratio:.6f}, allowed={self.max_invalid_nonblack_ratio:.6f}, "
-                f"black_threshold={self.masked_input_black_threshold}"
+                f"black_threshold={self.masked_input_black_threshold}. Continuing after runtime masking.",
+                rank0_only=False,
             )
 
     def __getitem__(self, index: int) -> dict[str, Any]:
-        data = super().__getitem__(index)
+        candidate_index = index
+        for retry in range(self.max_target_loss_mask_retries):
+            data = super().__getitem__(candidate_index)
+            try:
+                return self._attach_target_loss_mask(data)
+            except Exception as error:
+                video_name = str(data.get("__key__", "unknown"))
+                failed_index = self._video_indices_by_name.get(video_name, candidate_index)
+                self.bad_video_indices.add(failed_index)
+                log.warning(
+                    f"Skipping target-loss-mask sample {video_name}: {error}. "
+                    f"Retrying another sample ({retry + 1}/{self.max_target_loss_mask_retries}).",
+                    rank0_only=False,
+                )
+                candidate_index = (failed_index + 1) % len(self.video_paths)
+        raise RuntimeError(
+            f"Could not prepare a target-loss-mask sample after {self.max_target_loss_mask_retries} retries"
+        )
+
+    def _attach_target_loss_mask(self, data: dict[str, Any]) -> dict[str, Any]:
         target_loss_mask = self._load_aligned_target_loss_mask(data)
         condition_keep_mask = self._condition_keep_mask(data, target_loss_mask)
 
