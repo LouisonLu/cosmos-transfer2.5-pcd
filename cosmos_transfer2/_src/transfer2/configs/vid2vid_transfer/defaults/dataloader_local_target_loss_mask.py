@@ -44,6 +44,8 @@ def register_dataloader_local_target_loss_mask() -> None:
         enforce_mask_on_condition=True,
         use_control_input_as_video_condition=True,
         strict_masked_input_validation=True,
+        strict_masked_target_validation=True,
+        strict_masked_control_validation=False,
         masked_input_black_threshold=24,
         max_invalid_nonblack_ratio=0.05,
         validate_file_pairs=True,

@@ -27,6 +27,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--black-threshold", type=int, default=24)
     parser.add_argument("--max-invalid-nonblack-ratio", type=float, default=0.05)
     parser.add_argument(
+        "--strict-pcd-mask",
+        action="store_true",
+        help="Fail when the source PCD has non-black pixels in invalid regions. "
+        "By default this is reported but allowed because the training loader masks PCD at runtime.",
+    )
+    parser.add_argument(
         "--frame-indices",
         default="0,46,92",
         help="Comma-separated frames used for decoded pixel checks; use 'all' for every required frame",
@@ -119,7 +125,7 @@ def check_sample(
                 "RGB invalid region is not black enough: "
                 f"ratio={result['rgb_invalid_nonblack_ratio']:.6f}"
             )
-        if result["pcd_invalid_nonblack_ratio"] > args.max_invalid_nonblack_ratio:
+        if args.strict_pcd_mask and result["pcd_invalid_nonblack_ratio"] > args.max_invalid_nonblack_ratio:
             result["errors"].append(
                 "PCD invalid region is not black enough: "
                 f"ratio={result['pcd_invalid_nonblack_ratio']:.6f}"

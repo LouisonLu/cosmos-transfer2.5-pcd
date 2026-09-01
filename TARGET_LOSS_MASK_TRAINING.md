@@ -26,7 +26,7 @@ Each split must use one canonical stem for all four inputs:
 - White (`>=128`) means valid target information and contributes to loss.
 - Black (`<128`) means an invalid stitched hole and contributes zero target loss.
 
-The loader fails at startup when any paired file is missing. It also rejects resolution/aspect-ratio mismatches and, by default, rejects RGB or PCD files whose invalid regions are not consistently black.
+The loader fails at startup when any paired file is missing and rejects resolution/aspect-ratio mismatches. It strictly validates that the RGB target is black in invalid regions. Source PCD may contain additional geometry there because it can be rendered from more complete raw camera views; it is always masked at runtime before becoming either depth control or video condition.
 
 ## Validate local data
 
@@ -47,7 +47,7 @@ python tools/check_target_loss_mask_dataset.py /data/driving_dataset/train \
   --report /output/train_target_loss_mask_report_all_frames.json
 ```
 
-Do not disable `strict_masked_input_validation` merely to bypass a mismatch. First determine whether the mask convention is inverted, the filenames are paired incorrectly, or the PCD/RGB was not actually masked.
+Do not disable RGB target validation merely to bypass a mismatch. First determine whether the mask convention is inverted, the filenames are paired incorrectly, or the RGB target was not actually masked. Use `--strict-pcd-mask` only when the source PCD itself is expected to be pre-masked.
 
 ## Training entry point
 

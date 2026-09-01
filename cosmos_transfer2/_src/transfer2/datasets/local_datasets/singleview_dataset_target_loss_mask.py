@@ -41,6 +41,8 @@ class SingleViewTransferDatasetTargetLossMask(SingleViewTransferDatasetMask):
         enforce_mask_on_condition: bool = True,
         use_control_input_as_video_condition: bool = True,
         strict_masked_input_validation: bool = True,
+        strict_masked_target_validation: bool = True,
+        strict_masked_control_validation: bool = False,
         masked_input_black_threshold: int = 24,
         max_invalid_nonblack_ratio: float = 0.05,
         validate_file_pairs: bool = True,
@@ -64,6 +66,8 @@ class SingleViewTransferDatasetTargetLossMask(SingleViewTransferDatasetMask):
         self.enforce_mask_on_condition = bool(enforce_mask_on_condition)
         self.use_control_input_as_video_condition = bool(use_control_input_as_video_condition)
         self.strict_masked_input_validation = bool(strict_masked_input_validation)
+        self.strict_masked_target_validation = bool(strict_masked_target_validation)
+        self.strict_masked_control_validation = bool(strict_masked_control_validation)
         self.masked_input_black_threshold = int(masked_input_black_threshold)
         self.max_invalid_nonblack_ratio = float(max_invalid_nonblack_ratio)
 
@@ -90,6 +94,11 @@ class SingleViewTransferDatasetTargetLossMask(SingleViewTransferDatasetMask):
             "  Mask enforcement: "
             f"target={self.enforce_mask_on_target}, conditions={self.enforce_mask_on_condition}, "
             f"control_as_video_condition={self.use_control_input_as_video_condition}"
+        )
+        log.info(
+            "  Strict masked validation: "
+            f"target={self.strict_masked_input_validation and self.strict_masked_target_validation}, "
+            f"control={self.strict_masked_input_validation and self.strict_masked_control_validation}"
         )
 
     def _resolve_dataset_path(self, path: str) -> Path:
@@ -227,8 +236,9 @@ class SingleViewTransferDatasetTargetLossMask(SingleViewTransferDatasetMask):
         video_C_T_H_W: Tensor,
         data: dict[str, Any],
         valid_mask: Tensor,
+        enabled: bool,
     ) -> None:
-        if not self.strict_masked_input_validation:
+        if not self.strict_masked_input_validation or not enabled:
             return
         ratio = self._invalid_nonblack_ratio(video_C_T_H_W, data, valid_mask)
         if ratio > self.max_invalid_nonblack_ratio:
@@ -243,14 +253,26 @@ class SingleViewTransferDatasetTargetLossMask(SingleViewTransferDatasetMask):
         target_loss_mask = self._load_aligned_target_loss_mask(data)
         condition_keep_mask = self._condition_keep_mask(data, target_loss_mask)
 
-        self._validate_masked_tensor("Target RGB video", data["video"], data, target_loss_mask)
+        self._validate_masked_tensor(
+            "Target RGB video",
+            data["video"],
+            data,
+            target_loss_mask,
+            enabled=self.strict_masked_target_validation,
+        )
         if self.enforce_mask_on_target:
             data["video"] = self._apply_video_mask(data["video"], condition_keep_mask)
 
         control_key = f"control_input_{self.ctrl_type}"
         if control_key not in data:
             raise KeyError(f"Required masked control input is missing: {control_key}")
-        self._validate_masked_tensor("PCD/control video", data[control_key], data, target_loss_mask)
+        self._validate_masked_tensor(
+            "PCD/control video",
+            data[control_key],
+            data,
+            target_loss_mask,
+            enabled=self.strict_masked_control_validation,
+        )
         if self.enforce_mask_on_condition:
             data[control_key] = self._apply_video_mask(data[control_key], condition_keep_mask)
 
