@@ -67,7 +67,9 @@ transfer2_singleview_posttrain_pcd_masked_rgb_target_loss_mask = dict(
             prompt_dir="prompts",
             prompt_suffix="_prompt",
             enforce_mask_on_target=True,
-            enforce_mask_on_condition=True,
+            # Keep Pi3 geometry complete. The RGB-derived mask is used for the
+            # target and target-loss validity only; image context is masked below.
+            enforce_mask_on_condition=False,
             use_control_input_as_video_condition=True,
         ),
     ),

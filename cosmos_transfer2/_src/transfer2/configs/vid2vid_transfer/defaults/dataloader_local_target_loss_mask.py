@@ -41,7 +41,7 @@ def register_dataloader_local_target_loss_mask() -> None:
         prompt_dir="prompts",
         prompt_suffix="_prompt",
         enforce_mask_on_target=True,
-        enforce_mask_on_condition=True,
+        enforce_mask_on_condition=False,
         use_control_input_as_video_condition=True,
         strict_masked_input_validation=True,
         strict_masked_target_validation=True,

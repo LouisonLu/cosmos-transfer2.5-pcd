@@ -19,14 +19,14 @@ Each split must use one canonical stem for all four inputs:
 ```
 
 - RGB is the masked target video `Y`.
-- PCD is both the masked depth control and the conditional video input.
-- The first frame of masked RGB is `image_context`.
+- PCD remains full and is used as both the depth control and conditional video input.
+- The first frame of masked RGB is the masked `image_context`.
 - Prompt JSON must contain a non-empty `caption`, `text`, or `prompt` string.
 - Mask video must contain at least the same 93 selected frames as RGB and PCD.
 - White (`>=128`) means valid target information and contributes to loss.
 - Black (`<128`) means an invalid stitched hole and contributes zero target loss.
 
-The loader filters incomplete pairs at startup and logs the skipped stems rather than aborting training. It logs RGB/PCD mask inconsistencies as diagnostics. Source PCD may contain additional geometry in invalid regions because it can be rendered from more complete raw camera views; it is always masked at runtime before becoming either depth control or video condition.
+The loader filters incomplete pairs at startup and logs the skipped stems rather than aborting training. It logs RGB/PCD mask inconsistencies as diagnostics. Source PCD may contain additional geometry in invalid regions because it is intentionally kept full as the depth control and conditional video input; only `Y`, its first-frame context, and the loss validity mask use the RGB mask.
 
 ## Validate local data
 
@@ -93,7 +93,7 @@ The guard reduces boundary contamination but also discards some valid supervisio
 
 ## Important limitations
 
-- Zero loss in invalid regions does not provide ground-truth supervision there. Completion quality still comes from the pretrained model, masked PCD, first frame, and prompt.
+- Zero loss in invalid regions does not provide ground-truth supervision there. Completion quality still comes from the pretrained model, full PCD, masked first frame, and prompt.
 - VAE features have a receptive field larger than a literal one-to-one pixel bin. The guard is conservative but cannot mathematically remove every boundary influence.
 - Per-sample normalization gives sparse and dense masks equal sample weight. Samples with very little valid content should be filtered rather than allowed to dominate through a tiny denominator.
 - Loss masks stored in lossy H.264 can acquire gray boundary pixels. Thresholding handles small artifacts, but lossless binary masks are preferable when storage permits.

@@ -19,7 +19,7 @@ from cosmos_transfer2._src.transfer2.utils.target_loss_mask import align_valid_m
 
 
 class SingleViewTransferDatasetTargetLossMask(SingleViewTransferDatasetMask):
-    """Load masked RGB/PCD conditions and a paired 93-frame validity mask.
+    """Load a masked RGB target, full PCD condition, and a paired validity mask.
 
     The parent dataset retains the established RGB, PCD, image-context, and text
     pipeline. This subclass adds a strict one-to-one target mask and prompt
@@ -40,7 +40,7 @@ class SingleViewTransferDatasetTargetLossMask(SingleViewTransferDatasetMask):
         prompt_dir: str = "prompts",
         prompt_suffix: str = "_prompt",
         enforce_mask_on_target: bool = True,
-        enforce_mask_on_condition: bool = True,
+        enforce_mask_on_condition: bool = False,
         use_control_input_as_video_condition: bool = True,
         strict_masked_input_validation: bool = True,
         strict_masked_target_validation: bool = True,
