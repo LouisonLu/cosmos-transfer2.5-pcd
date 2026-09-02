@@ -88,6 +88,9 @@ class InferenceArgumentsNoVideoPath(CommonInferenceArguments):
     guided_generation_mask_first_frame_only: bool = False
     """Use only frame 0 of the guided-generation mask; treat all later frames as black."""
 
+    guided_generation_mask_erode_px: pydantic.NonNegativeInt = 0
+    """Shrink every white guided-mask region inward by this many pixels before hardlocking."""
+
     guided_generation_step_threshold: int = 25
     """Step threshold for guided generation."""
 
@@ -106,6 +109,9 @@ class InferenceArgumentsNoVideoPath(CommonInferenceArguments):
             raise ValueError(
                 "vis control and image_context_path are both used to transfer style. Using these modes together leads to conflicts. Please only provide one"
             )
+
+        if self.guided_generation_mask_erode_px > 0 and self.guided_generation_mask is None:
+            raise ValueError("guided_generation_mask_erode_px requires guided_generation_mask")
 
         for key in self.hint_keys:
             control = getattr(self, key)

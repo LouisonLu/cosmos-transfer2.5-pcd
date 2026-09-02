@@ -18,6 +18,7 @@ import time
 from typing import Optional
 
 import torch
+import torch.nn.functional as F
 
 from cosmos_transfer2._src.imaginaire.utils import log
 from cosmos_transfer2._src.predict2.datasets.utils import VIDEO_RES_SIZE_INFO
@@ -49,6 +50,23 @@ class ControlVideo2WorldInferencePartialHardlockNoVideoPath(ControlVideo2WorldIn
 
     last_surrogate_input_frames: torch.Tensor | None = None
     last_surrogate_fps: int | None = None
+
+    @staticmethod
+    def _erode_guided_generation_mask(mask_C_T_H_W: torch.Tensor, erode_px: int) -> torch.Tensor:
+        """Erode all white connected regions by ``erode_px`` at the input resolution."""
+        if erode_px == 0:
+            return mask_C_T_H_W
+
+        binary_T_1_H_W = (mask_C_T_H_W[:1] >= 0.5).float().permute(1, 0, 2, 3)
+        kernel_size = 2 * erode_px + 1
+        invalid_T_1_H_W = 1.0 - binary_T_1_H_W
+        eroded_T_1_H_W = 1.0 - F.max_pool2d(
+            invalid_T_1_H_W,
+            kernel_size=kernel_size,
+            stride=1,
+            padding=erode_px,
+        )
+        return eroded_T_1_H_W.permute(1, 0, 2, 3).repeat(mask_C_T_H_W.shape[0], 1, 1, 1)
 
     def _get_reference_control_path(
         self,
@@ -127,6 +145,7 @@ class ControlVideo2WorldInferencePartialHardlockNoVideoPath(ControlVideo2WorldIn
         num_steps: int = 35,
         guided_generation_mask: str | None = None,
         guided_generation_mask_first_frame_only: bool = False,
+        guided_generation_mask_erode_px: int = 0,
         guided_generation_step_threshold: int = 25,
         guided_generation_foreground_labels: list[int] | None = None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor], dict[str, torch.Tensor], int, tuple[int, int]]:
@@ -148,6 +167,20 @@ class ControlVideo2WorldInferencePartialHardlockNoVideoPath(ControlVideo2WorldIn
                 resolution=resolution,
                 max_frames=max_frames,
             ).squeeze(0)
+            guided_generation_mask = self._erode_guided_generation_mask(
+                guided_generation_mask,
+                guided_generation_mask_erode_px,
+            )
+            if guided_generation_mask_erode_px > 0:
+                first_mask = guided_generation_mask[:, :1]
+                input_frames[:, :1] = (input_frames[:, :1].float() * first_mask).round().to(torch.uint8)
+                image_context = uint8_to_normalized_float(
+                    input_frames[:, 0], dtype=image_context.dtype
+                ).unsqueeze(0)
+                log.info(
+                    f"Eroded every guided-mask boundary by {guided_generation_mask_erode_px}px "
+                    "and applied the eroded frame-0 mask to image context."
+                )
             if guided_generation_mask_first_frame_only:
                 guided_generation_mask[:, 1:] = 0
                 log.info("Using guided-generation mask on frame 0 only; future mask frames are black.")

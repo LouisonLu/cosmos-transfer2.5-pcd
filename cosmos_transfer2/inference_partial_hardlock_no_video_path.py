@@ -172,6 +172,7 @@ class Control2WorldInferencePartialHardlockNoVideoPath:
         guided_generation_step_threshold = sample.guided_generation_step_threshold
         guided_generation_foreground_labels = sample.guided_generation_foreground_labels
         guided_generation_mask_first_frame_only = sample.guided_generation_mask_first_frame_only
+        guided_generation_mask_erode_px = sample.guided_generation_mask_erode_px
 
         if self.device_rank == 0:
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -240,6 +241,7 @@ class Control2WorldInferencePartialHardlockNoVideoPath:
                     num_steps=sample.num_steps,
                     guided_generation_mask=guided_generation_mask,
                     guided_generation_mask_first_frame_only=guided_generation_mask_first_frame_only,
+                    guided_generation_mask_erode_px=guided_generation_mask_erode_px,
                     guided_generation_step_threshold=guided_generation_step_threshold,
                     guided_generation_foreground_labels=guided_generation_foreground_labels,
                 )
