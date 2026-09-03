@@ -89,7 +89,7 @@ class InferenceArgumentsNoVideoPath(CommonInferenceArguments):
     """Use only frame 0 of the guided-generation mask; treat all later frames as black."""
 
     guided_generation_mask_erode_px: pydantic.NonNegativeInt = 0
-    """Shrink every white guided-mask region inward by this many pixels before hardlocking."""
+    """Shrink every white guided-mask region inward by this many pixels before latent hardlocking, without altering image context."""
 
     guided_generation_step_threshold: int = 25
     """Step threshold for guided generation."""

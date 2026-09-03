@@ -172,14 +172,9 @@ class ControlVideo2WorldInferencePartialHardlockNoVideoPath(ControlVideo2WorldIn
                 guided_generation_mask_erode_px,
             )
             if guided_generation_mask_erode_px > 0:
-                first_mask = guided_generation_mask[:, :1]
-                input_frames[:, :1] = (input_frames[:, :1].float() * first_mask).round().to(torch.uint8)
-                image_context = uint8_to_normalized_float(
-                    input_frames[:, 0], dtype=image_context.dtype
-                ).unsqueeze(0)
                 log.info(
                     f"Eroded every guided-mask boundary by {guided_generation_mask_erode_px}px "
-                    "and applied the eroded frame-0 mask to image context."
+                    "for the latent hardlock only; image context remains unchanged."
                 )
             if guided_generation_mask_first_frame_only:
                 guided_generation_mask[:, 1:] = 0
