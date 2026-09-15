@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -58,6 +59,8 @@ class LiveProgress:
 
     SPINNER = ("|", "/", "-", "\\")
 
+    ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
     def __init__(self, total: int, default_steps: int):
         self.total = total
         self.default_steps = default_steps
@@ -69,6 +72,7 @@ class LiveProgress:
         self.current_phase = "starting Cosmos"
         self.current_step = 0
         self.current_step_total = default_steps
+        self.current_tqdm_line: Optional[str] = None
         self.current_started_at = time.monotonic()
         self.started_at = time.monotonic()
         self._lock = threading.Lock()
@@ -91,6 +95,7 @@ class LiveProgress:
             self.current_phase = "waiting for model / sample setup"
             self.current_step = 0
             self.current_step_total = self.default_steps
+            self.current_tqdm_line = None
             self.current_started_at = time.monotonic()
         if not self._interactive:
             self._draw(force_line=True)
@@ -134,7 +139,13 @@ class LiveProgress:
         if not self._interactive:
             self._draw(force_line=True)
 
-    def _snapshot(self) -> tuple[int, int, int, Optional[float], str, str, int, int, float, float, int]:
+    def update_tqdm(self, line: str) -> None:
+        with self._lock:
+            self.current_tqdm_line = self.ANSI_ESCAPE.sub("", line).strip()
+        if not self._interactive:
+            self._draw(force_line=True)
+
+    def _snapshot(self) -> tuple[int, int, int, Optional[float], str, str, int, int, Optional[str], float, float, int]:
         with self._lock:
             average = sum(self.durations) / len(self.durations) if self.durations else None
             return (
@@ -146,13 +157,14 @@ class LiveProgress:
                 self.current_phase,
                 self.current_step,
                 self.current_step_total,
+                self.current_tqdm_line,
                 time.monotonic() - self.current_started_at,
                 time.monotonic() - self.started_at,
                 self._frame,
             )
 
     def _draw(self, force_line: bool = False) -> None:
-        completed, successes, failures, average, current, phase, step, step_total, sample_elapsed, elapsed, frame = self._snapshot()
+        completed, successes, failures, average, current, phase, step, step_total, tqdm_line, sample_elapsed, elapsed, frame = self._snapshot()
         self._frame += 1
         width = 26
         filled = round(width * completed / self.total)
@@ -172,8 +184,11 @@ class LiveProgress:
         step_width = 26
         step_filled = round(step_width * min(step, step_total) / step_total)
         step_bar = "#" * step_filled + "-" * (step_width - step_filled)
-        short_phase = phase if len(phase) <= 48 else f"{phase[:45]}..."
-        line3 = f"phase: {short_phase} | steps: [{step_bar}] {min(step, step_total)}/{step_total}"
+        if tqdm_line is not None:
+            line3 = tqdm_line
+        else:
+            short_phase = phase if len(phase) <= 48 else f"{phase[:45]}..."
+            line3 = f"phase: {short_phase} | steps: [{step_bar}] {min(step, step_total)}/{step_total}"
 
         if self._interactive:
             if self._drawn:
@@ -437,6 +452,7 @@ def run_inference(
     current_name: Optional[str] = None
     current_started: Optional[float] = None
     lock = threading.Lock()
+    tqdm_step_pattern = re.compile(r"\b(\d+)\s*/\s*(\d+)\b")
 
     environment = os.environ.copy()
     environment["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
@@ -462,6 +478,12 @@ def run_inference(
                     current_name = candidate
                     current_started = time.monotonic()
                 progress.begin_scene(candidate)
+        elif "Generating samples:" in line:
+            tqdm_line = line[line.index("Generating samples:") :]
+            progress.update_tqdm(tqdm_line)
+            match = tqdm_step_pattern.search(tqdm_line)
+            if match is not None:
+                progress.update_step(int(match.group(1)), int(match.group(2)))
         elif "COSMOS_INFERENCE_STEP" in line:
             step_text = line.split("COSMOS_INFERENCE_STEP", 1)[1].strip()
             try:
@@ -501,10 +523,22 @@ def run_inference(
     def copy_output() -> None:
         assert process.stdout is not None
         with log_path.open("w", encoding="utf-8") as log_file:
-            for line in process.stdout:
-                log_file.write(line)
-                log_file.flush()
-                observe(line)
+            record: list[str] = []
+            while True:
+                character = process.stdout.read(1)
+                if not character:
+                    break
+                log_file.write(character)
+                if character in "\r\n":
+                    if record:
+                        observe("".join(record))
+                        record.clear()
+                    log_file.flush()
+                else:
+                    record.append(character)
+            if record:
+                observe("".join(record))
+            log_file.flush()
 
     progress.start()
     progress.begin_scene(planned[0].name)
