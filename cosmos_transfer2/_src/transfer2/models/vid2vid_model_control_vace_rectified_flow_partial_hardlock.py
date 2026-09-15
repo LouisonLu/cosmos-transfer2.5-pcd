@@ -470,6 +470,10 @@ class ControlVideo2WorldModelRectifiedFlowPartialHardlock(Video2WorldModelRectif
             timesteps_iter = tqdm.tqdm(timesteps, desc="Generating samples", total=len(timesteps))
 
         for num_step, t in enumerate(timesteps_iter):
+            # The batch runner consumes this opt-in event to render its live
+            # per-sample step bar without adding normal inference log noise.
+            if os.environ.get("COSMOS_INFERENCE_PROGRESS") == "1" and get_rank() == 0:
+                log.info(f"COSMOS_INFERENCE_STEP {num_step + 1}/{len(timesteps)}")
             latent_model_input = latents
             timestep = [t]
 

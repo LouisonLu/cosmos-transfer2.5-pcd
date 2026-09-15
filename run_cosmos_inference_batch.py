@@ -58,13 +58,17 @@ class LiveProgress:
 
     SPINNER = ("|", "/", "-", "\\")
 
-    def __init__(self, total: int):
+    def __init__(self, total: int, default_steps: int):
         self.total = total
+        self.default_steps = default_steps
         self.completed = 0
         self.successes = 0
         self.failures = 0
         self.durations: list[float] = []
         self.current_scene = "waiting"
+        self.current_step = 0
+        self.current_step_total = default_steps
+        self.current_started_at = time.monotonic()
         self.started_at = time.monotonic()
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -83,6 +87,16 @@ class LiveProgress:
     def begin_scene(self, scene_label: str) -> None:
         with self._lock:
             self.current_scene = scene_label
+            self.current_step = 0
+            self.current_step_total = self.default_steps
+            self.current_started_at = time.monotonic()
+        if not self._interactive:
+            self._draw(force_line=True)
+
+    def update_step(self, step: int, total_steps: int) -> None:
+        with self._lock:
+            self.current_step = max(0, step)
+            self.current_step_total = max(1, total_steps)
         if not self._interactive:
             self._draw(force_line=True)
 
@@ -93,6 +107,7 @@ class LiveProgress:
             self.failures += int(not succeeded)
             self.durations.append(duration)
             self.current_scene = "selecting next sample" if self.completed < self.total else "complete"
+            self.current_step = self.current_step_total
         if not self._interactive:
             self._draw(force_line=True)
 
@@ -110,7 +125,7 @@ class LiveProgress:
             self._stop.wait(0.2)
         self._draw()
 
-    def _snapshot(self) -> tuple[int, int, int, Optional[float], str, float, int]:
+    def _snapshot(self) -> tuple[int, int, int, Optional[float], str, int, int, float, float, int]:
         with self._lock:
             average = sum(self.durations) / len(self.durations) if self.durations else None
             return (
@@ -119,12 +134,15 @@ class LiveProgress:
                 self.failures,
                 average,
                 self.current_scene,
+                self.current_step,
+                self.current_step_total,
+                time.monotonic() - self.current_started_at,
                 time.monotonic() - self.started_at,
                 self._frame,
             )
 
     def _draw(self, force_line: bool = False) -> None:
-        completed, successes, failures, average, current, elapsed, frame = self._snapshot()
+        completed, successes, failures, average, current, step, step_total, sample_elapsed, elapsed, frame = self._snapshot()
         self._frame += 1
         width = 26
         filled = round(width * completed / self.total)
@@ -138,18 +156,22 @@ class LiveProgress:
             f"success={successes} failed={failures}"
         )
         line2 = (
-            f"running: {short_current} | elapsed {format_duration(elapsed)} | "
+            f"running: {short_current} | sample {format_duration(sample_elapsed)} | elapsed {format_duration(elapsed)} | "
             f"avg {format_duration(average)} | ETA {format_duration(eta)}"
         )
+        step_width = 26
+        step_filled = round(step_width * min(step, step_total) / step_total)
+        step_bar = "#" * step_filled + "-" * (step_width - step_filled)
+        line3 = f"steps: [{step_bar}] {min(step, step_total)}/{step_total}"
 
         if self._interactive:
             if self._drawn:
-                sys.stderr.write("\r\033[2K\033[1A\r\033[2K")
-            sys.stderr.write(f"{line1}\n{line2}")
+                sys.stderr.write("\r\033[2K\033[1A\r\033[2K\033[1A\r\033[2K")
+            sys.stderr.write(f"{line1}\n{line2}\n{line3}")
             sys.stderr.flush()
             self._drawn = True
         elif force_line:
-            print(f"{line1}\n{line2}", flush=True)
+            print(f"{line1}\n{line2}\n{line3}", flush=True)
 
 
 @dataclass(frozen=True)
@@ -395,9 +417,10 @@ def run_inference(
     planned: list[Sample],
     timeout_seconds: int,
     cuda_visible_devices: str,
+    steps: int,
 ) -> tuple[int, dict[str, dict[str, Any]]]:
     results: dict[str, dict[str, Any]] = {}
-    progress = LiveProgress(len(planned))
+    progress = LiveProgress(len(planned), default_steps=steps)
     names = {sample.name for sample in planned}
     outputs = {sample.name: sample.output for sample in planned}
     current_name: Optional[str] = None
@@ -406,6 +429,7 @@ def run_inference(
 
     environment = os.environ.copy()
     environment["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
+    environment["COSMOS_INFERENCE_PROGRESS"] = "1"
 
     process = subprocess.Popen(
         command,
@@ -427,6 +451,13 @@ def run_inference(
                     current_name = candidate
                     current_started = time.monotonic()
                 progress.begin_scene(candidate)
+        elif "COSMOS_INFERENCE_STEP" in line:
+            step_text = line.split("COSMOS_INFERENCE_STEP", 1)[1].strip()
+            try:
+                step, total_steps = (int(value) for value in step_text.split("/", 1))
+            except ValueError:
+                return
+            progress.update_step(step, total_steps)
         elif "Generated video saved" in line or "Saved generated video" in line:
             with lock:
                 name = current_name
@@ -453,6 +484,7 @@ def run_inference(
                 observe(line)
 
     progress.start()
+    progress.begin_scene(planned[0].name)
     reader = threading.Thread(target=copy_output, daemon=True)
     reader.start()
     try:
@@ -641,6 +673,7 @@ def main() -> None:
             planned,
             args.timeout_seconds,
             args.cuda_visible_devices,
+            args.steps,
         )
     except OSError as exception:
         error = f"Cannot start Cosmos inference: {exception}"
