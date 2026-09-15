@@ -66,6 +66,7 @@ class LiveProgress:
         self.failures = 0
         self.durations: list[float] = []
         self.current_scene = "waiting"
+        self.current_phase = "starting Cosmos"
         self.current_step = 0
         self.current_step_total = default_steps
         self.current_started_at = time.monotonic()
@@ -87,6 +88,7 @@ class LiveProgress:
     def begin_scene(self, scene_label: str) -> None:
         with self._lock:
             self.current_scene = scene_label
+            self.current_phase = "waiting for model / sample setup"
             self.current_step = 0
             self.current_step_total = self.default_steps
             self.current_started_at = time.monotonic()
@@ -107,6 +109,7 @@ class LiveProgress:
             self.failures += int(not succeeded)
             self.durations.append(duration)
             self.current_scene = "selecting next sample" if self.completed < self.total else "complete"
+            self.current_phase = "complete" if self.completed == self.total else "waiting for next sample"
             self.current_step = self.current_step_total
         if not self._interactive:
             self._draw(force_line=True)
@@ -125,7 +128,13 @@ class LiveProgress:
             self._stop.wait(0.2)
         self._draw()
 
-    def _snapshot(self) -> tuple[int, int, int, Optional[float], str, int, int, float, float, int]:
+    def update_phase(self, phase: str) -> None:
+        with self._lock:
+            self.current_phase = phase
+        if not self._interactive:
+            self._draw(force_line=True)
+
+    def _snapshot(self) -> tuple[int, int, int, Optional[float], str, str, int, int, float, float, int]:
         with self._lock:
             average = sum(self.durations) / len(self.durations) if self.durations else None
             return (
@@ -134,6 +143,7 @@ class LiveProgress:
                 self.failures,
                 average,
                 self.current_scene,
+                self.current_phase,
                 self.current_step,
                 self.current_step_total,
                 time.monotonic() - self.current_started_at,
@@ -142,7 +152,7 @@ class LiveProgress:
             )
 
     def _draw(self, force_line: bool = False) -> None:
-        completed, successes, failures, average, current, step, step_total, sample_elapsed, elapsed, frame = self._snapshot()
+        completed, successes, failures, average, current, phase, step, step_total, sample_elapsed, elapsed, frame = self._snapshot()
         self._frame += 1
         width = 26
         filled = round(width * completed / self.total)
@@ -162,7 +172,8 @@ class LiveProgress:
         step_width = 26
         step_filled = round(step_width * min(step, step_total) / step_total)
         step_bar = "#" * step_filled + "-" * (step_width - step_filled)
-        line3 = f"steps: [{step_bar}] {min(step, step_total)}/{step_total}"
+        short_phase = phase if len(phase) <= 48 else f"{phase[:45]}..."
+        line3 = f"phase: {short_phase} | steps: [{step_bar}] {min(step, step_total)}/{step_total}"
 
         if self._interactive:
             if self._drawn:
@@ -458,6 +469,18 @@ def run_inference(
             except ValueError:
                 return
             progress.update_step(step, total_steps)
+        elif "COSMOS_INFERENCE_PHASE" in line:
+            progress.update_phase(line.split("COSMOS_INFERENCE_PHASE", 1)[1].strip())
+        elif "Synthesizing surrogate RGB input" in line:
+            progress.update_phase("building surrogate RGB")
+        elif "Computing prompt text embeddings" in line:
+            progress.update_phase("encoding prompt")
+        elif "Loading control inputs" in line:
+            progress.update_phase("loading PCD control")
+        elif "Generating chunk" in line:
+            progress.update_phase("encoding image and control latents")
+        elif "Seed:" in line:
+            progress.update_phase("setting up denoising")
         elif "Generated video saved" in line or "Saved generated video" in line:
             with lock:
                 name = current_name

@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import random
 import time
 from typing import Optional
@@ -301,6 +302,8 @@ class ControlVideo2WorldInferencePartialHardlockNoVideoPath(ControlVideo2WorldIn
                 random.seed(seed)
                 seed = random.randint(0, 1000000)
                 log.info(f"Seed: {seed}")
+                if os.environ.get("COSMOS_INFERENCE_PROGRESS") == "1":
+                    log.info("COSMOS_INFERENCE_PHASE denoising")
 
                 sample = self.model.generate_samples_from_batch(
                     data_batch,
