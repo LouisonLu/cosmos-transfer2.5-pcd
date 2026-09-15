@@ -11,6 +11,14 @@ under ``data_root`` is::
     mask/<stem>_mask.mp4
     prompts/<stem>_prompt.json
 
+For a previously prepared benchmark input directory, pass ``--layout flat``
+instead.  Its direct-child layout is::
+
+    <stem>.mp4
+    <stem>_pcd.mp4
+    <stem>_mask.mp4
+    <stem>_prompt.json
+
 ``--mode no-video-path`` targets the current partial-hardlock/no-video-path
 entry point.  It creates a masked RGB frame 0 image context, uses the PCD
 video as depth control, and can hard-lock the white region of the mask.
@@ -265,30 +273,44 @@ def make_request(sample: Sample, args: argparse.Namespace, prompt: str, image_co
 
 
 def build_samples(args: argparse.Namespace) -> list[Sample]:
-    rgb_root = args.data_root / args.rgb_dir
-    pcd_root = args.data_root / args.pcd_dir
-    prompt_root = args.data_root / args.prompt_dir
-    mask_root = args.data_root / args.mask_dir
-    for path, label in ((rgb_root, "RGB directory"), (pcd_root, "PCD directory"), (prompt_root, "prompt directory")):
-        if not path.is_dir():
-            raise ValueError(f"Missing {label}: {path}")
-
+    if not args.data_root.is_dir():
+        raise ValueError(f"Missing data root: {args.data_root}")
     requires_mask = args.mode == "no-video-path" or args.image_context == "masked" or args.guided_hardlock
-    if requires_mask and not mask_root.is_dir():
-        raise ValueError(f"Missing mask directory: {mask_root}")
-
-    rgb_videos = sorted(path for path in rgb_root.iterdir() if path.is_file() and path.suffix.lower() == ".mp4")
+    if args.layout == "directories":
+        rgb_root = args.data_root / args.rgb_dir
+        pcd_root = args.data_root / args.pcd_dir
+        prompt_root = args.data_root / args.prompt_dir
+        mask_root = args.data_root / args.mask_dir
+        for path, label in ((rgb_root, "RGB directory"), (pcd_root, "PCD directory"), (prompt_root, "prompt directory")):
+            if not path.is_dir():
+                raise ValueError(f"Missing {label}: {path}")
+        if requires_mask and not mask_root.is_dir():
+            raise ValueError(f"Missing mask directory: {mask_root}")
+        rgb_videos = sorted(path for path in rgb_root.iterdir() if path.is_file() and path.suffix.lower() == ".mp4")
+        pcd_for = lambda stem: pcd_root / f"{stem}{args.pcd_suffix}.mp4"
+        prompt_for = lambda stem: prompt_root / f"{stem}{args.prompt_suffix}.json"
+        mask_for = lambda stem: mask_root / f"{stem}{args.mask_suffix}.mp4"
+    else:
+        control_suffixes = (f"{args.pcd_suffix}.mp4", f"{args.mask_suffix}.mp4")
+        rgb_videos = sorted(
+            path
+            for path in args.data_root.iterdir()
+            if path.is_file() and path.suffix.lower() == ".mp4" and not path.name.endswith(control_suffixes)
+        )
+        pcd_for = lambda stem: args.data_root / f"{stem}{args.pcd_suffix}.mp4"
+        prompt_for = lambda stem: args.data_root / f"{stem}{args.prompt_suffix}.json"
+        mask_for = lambda stem: args.data_root / f"{stem}{args.mask_suffix}.mp4"
     if not rgb_videos:
-        raise ValueError(f"No direct .mp4 files in RGB directory: {rgb_root}")
+        raise ValueError(f"No direct RGB .mp4 files for {args.layout} layout: {args.data_root}")
     if args.limit is not None:
         rgb_videos = rgb_videos[: args.limit]
 
     samples: list[Sample] = []
     for rgb in rgb_videos:
         stem = rgb.stem
-        pcd = pcd_root / f"{stem}{args.pcd_suffix}.mp4"
-        prompt = prompt_root / f"{stem}{args.prompt_suffix}.json"
-        mask = mask_root / f"{stem}{args.mask_suffix}.mp4" if requires_mask else None
+        pcd = pcd_for(stem)
+        prompt = prompt_for(stem)
+        mask = mask_for(stem) if requires_mask else None
         require_file(rgb, f"RGB video for {stem}")
         require_file(pcd, f"PCD video for {stem}")
         require_file(prompt, f"prompt for {stem}")
@@ -472,6 +494,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--experiment", required=True, help="Cosmos experiment name")
     parser.add_argument("--config-file", type=Path, required=True, help="Cosmos config path, relative to --cosmos-root or absolute")
     parser.add_argument("--mode", choices=("no-video-path", "standard-video"), default="no-video-path")
+    parser.add_argument(
+        "--layout",
+        choices=("directories", "flat"),
+        default="directories",
+        help="directories: rgb_videos/, pcd_videos/, mask/, prompts/; flat: all matching files directly under data_root",
+    )
     parser.add_argument("--torchrun-bin", default="torchrun", help="torchrun executable")
     parser.add_argument("--nproc-per-node", type=int, default=1)
     parser.add_argument("--cuda-visible-devices", default="0")
