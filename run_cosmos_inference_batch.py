@@ -600,9 +600,13 @@ def main() -> None:
         return
 
     spec_path = args.work_root / "batch_requests.jsonl"
-    spec_path.write_text(
-        "".join(sample.request.read_text(encoding="utf-8").strip() + "\n" for sample in planned), encoding="utf-8"
-    )
+    # Cosmos parses a .jsonl file one physical line at a time.  Per-sample
+    # request files are intentionally pretty-printed for inspection, so load
+    # and compact them before building the batch file.
+    with spec_path.open("w", encoding="utf-8") as handle:
+        for sample in planned:
+            request = json.loads(sample.request.read_text(encoding="utf-8"))
+            handle.write(json.dumps(request, ensure_ascii=False, separators=(",", ":")) + "\n")
     command = [
         args.torchrun_bin,
         "--nproc_per_node",
