@@ -1,0 +1,1 @@
+"""Geometry-aware metric declarations."""
