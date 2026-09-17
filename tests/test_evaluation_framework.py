@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from evaluation.aggregate import aggregate_records
+from evaluation.aggregate import aggregate_paired_deltas, aggregate_records, paired_delta_records
 from evaluation.datasets.benchmark_manifest import load_manifest
 from evaluation.metrics.panorama.seam import cyclic_seam_metrics
 
@@ -42,3 +42,19 @@ def test_aggregate_keeps_id_and_ood_separate_unless_requested() -> None:
 
     assert {(row["split"], row["valid_scenes"]) for row in separate} == {("id", 2), ("ood", 1)}
     assert any(row["split"] == "combined" and row["valid_scenes"] == 3 for row in combined)
+
+
+def test_paired_delta_reverses_improvement_for_lower_is_better_metrics() -> None:
+    records = [
+        {"scene_id": "a", "split": "id", "cohort": "different_scene", "method": "no_blend", "plugin": "seam", "metric": "seam_l1", "status": "ok", "value": 0.20, "higher_is_better": False},
+        {"scene_id": "a", "split": "id", "cohort": "different_scene", "method": "blend", "plugin": "seam", "metric": "seam_l1", "status": "ok", "value": 0.10, "higher_is_better": False},
+        {"scene_id": "b", "split": "id", "cohort": "different_scene", "method": "no_blend", "plugin": "seam", "metric": "seam_l1", "status": "ok", "value": 0.10, "higher_is_better": False},
+        {"scene_id": "b", "split": "id", "cohort": "different_scene", "method": "blend", "plugin": "seam", "metric": "seam_l1", "status": "ok", "value": 0.20, "higher_is_better": False},
+    ]
+
+    deltas = paired_delta_records(records, "no_blend", "blend")
+    summaries = aggregate_paired_deltas(deltas)
+
+    assert [row["outcome"] for row in deltas] == ["improved", "worsened"]
+    assert summaries[0]["improved"] == 1
+    assert summaries[0]["worsened"] == 1

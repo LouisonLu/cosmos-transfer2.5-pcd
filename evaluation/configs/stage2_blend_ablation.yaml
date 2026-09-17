@@ -1,0 +1,42 @@
+# Exact Stage 2 decoder ablation for the frozen benchmark40 manifest.
+# The two methods must point to already-generated paired videos. This config
+# never invokes Cosmos inference or changes any prediction.
+name: stage2_blend_ablation_benchmark40_v1
+manifest: ../manifests/benchmark40.csv
+output_dir: ${EVAL_OUTPUT_ROOT}/stage2_blend_ablation_benchmark40_v1
+metrics: [seam, lpips, vbench]
+paired_comparison:
+  baseline_method: stage2_no_blend
+  treatment_method: stage2_blended_decode
+  tie_tolerance: 1.0e-12
+datasets:
+  id:
+    reference_root: ${EVAL_DATA_ROOT}/test/rgb_videos
+    input_rgb_root: ${EVAL_DATA_ROOT}/test/rgb_videos
+    mask_root: ${EVAL_DATA_ROOT}/test/mask
+  ood:
+    reference_root: ${EVAL_DATA_ROOT}/ood/rgb_videos
+    input_rgb_root: ${EVAL_DATA_ROOT}/ood/rgb_videos
+    mask_root: ${EVAL_DATA_ROOT}/ood/mask
+methods:
+  stage2_no_blend:
+    label: Stage 2 epoch 04 partial hard-lock, no blended decoding
+    prediction_roots:
+      id: ${EVAL_PREDICTIONS_ROOT}/test
+      ood: ${EVAL_PREDICTIONS_ROOT}/ood_nuscenes
+    prediction_template: "hardlock/{cohort}/{stem}__stage2_epoch04_warmstart_pcdfixed__hardlock_steps35_guidance7_seed2025_erode8.mp4"
+  stage2_blended_decode:
+    label: Stage 2 epoch 04 partial hard-lock plus 180-degree blended decoding
+    prediction_roots:
+      id: ${EVAL_PREDICTIONS_ROOT}/test
+      ood: ${EVAL_PREDICTIONS_ROOT}/ood_nuscenes
+    prediction_template: "hardlock_blended_decode/{cohort}/{stem}__stage2_epoch04_warmstart_pcdfixed__hardlock_blended_decode_steps35_guidance7_seed2025_erode8.mp4"
+evaluation:
+  projection_convention: equirectangular_360
+  frame_count: 93
+  frame_sampling: all_frames_0_to_92_in_file_order
+  resize_policy: exact_match_required_no_resize
+  interpolation_policy: none
+  image_value_normalization: RGB_float32_0_to_1
+  random_seed: 2025
+  bootstrap_samples: 1000

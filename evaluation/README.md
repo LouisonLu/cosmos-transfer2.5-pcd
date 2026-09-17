@@ -10,6 +10,7 @@ replaces a missing official metric with a proxy.
 - `manifests/benchmark40.csv`: frozen 20 ID plus 20 NuScenes OOD benchmark.
 - `configs/model_progression.yaml`: official Cosmos versus Stage 1 versus Stage 2.
 - `configs/blend_ablation.yaml`: Stage 2 hard-lock versus blended decoder.
+- `configs/stage2_blend_ablation.yaml`: paired Stage 2 seam ablation with delta aggregation.
 - `metrics/`: isolated metric implementations and explicit dependency metadata.
 - `outputs/`: selected by each config or `--output-dir`; contains JSONL raw
   records, per-scene CSV, aggregate CSV, audit JSON, and Markdown summary.
@@ -62,3 +63,10 @@ raw rows. FID/FVD are deliberately marked dataset-level and unavailable until
 this repository pins an official implementation, feature weights, sampling
 scheme, and ERP projection policy. The same rule applies to VBench, Q-Align,
 and MEt3R.
+
+For the Stage 2 decoder claim, use `stage2_blend_ablation.yaml`. It writes
+`paired_deltas.csv` in addition to the required outputs. Each row is joined by
+scene, split, cohort, and metric, and defines `delta = blended - no_blend`.
+Negative deltas are improvements for seam metrics because all seam outputs are
+lower-is-better. The framework does not infer any global-geometry claim from
+this experiment.

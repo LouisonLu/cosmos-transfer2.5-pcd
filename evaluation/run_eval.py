@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from evaluation.aggregate import aggregate_records
+from evaluation.aggregate import aggregate_paired_deltas, aggregate_records, paired_delta_records
 from evaluation.config import load_config, resolve_dataset_path, resolve_path, resolve_prediction_path
 from evaluation.datasets.benchmark_manifest import BenchmarkScene, load_manifest, manifest_sha256
 from evaluation.metrics.base import MetricPlugin, SceneContext
@@ -32,6 +32,7 @@ PER_SCENE_NAME = "per_scene.csv"
 SUMMARY_NAME = "summary.csv"
 AUDIT_NAME = "audit.json"
 MARKDOWN_NAME = "summary.md"
+PAIRED_NAME = "paired_deltas.csv"
 
 
 def parse_name_list(values: list[str] | None) -> list[str]:
@@ -231,7 +232,9 @@ def evaluate_plugin(plugin: MetricPlugin, context: SceneContext) -> list[dict[st
     return records
 
 
-def markdown_summary(config: dict[str, Any], summaries: list[dict[str, Any]], audit: dict[str, Any]) -> str:
+def markdown_summary(
+    config: dict[str, Any], summaries: list[dict[str, Any]], paired_summaries: list[dict[str, Any]], audit: dict[str, Any]
+) -> str:
     lines = [
         f"# Evaluation Summary: {config['name']}",
         "",
@@ -254,6 +257,24 @@ def markdown_summary(config: dict[str, Any], summaries: list[dict[str, Any]], au
         )
     if not summaries:
         lines.append("| No finite successful metrics were produced. | | | | | | | |")
+    if paired_summaries:
+        lines.extend(
+            [
+                "",
+                "## Paired Delta: Treatment Minus Baseline",
+                "",
+                "Lower-is-better metrics use negative delta as improvement; higher-is-better metrics use positive delta.",
+                "",
+                "| Comparison | Split | Metric | Valid scenes | Mean delta | Median delta | Improved | Worsened | Tied |",
+                "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+            ]
+        )
+        for summary in paired_summaries:
+            lines.append(
+                f"| {summary['comparison']} | {summary['split']} | {summary['metric']} | {summary['valid_scenes']} | "
+                f"{summary['mean_delta']:.6f} | {summary['median_delta']:.6f} | {summary['improved']} | "
+                f"{summary['worsened']} | {summary['tied']} |"
+            )
     lines.extend(["", "## Status Counts", ""])
     for status, count in sorted(audit["status_counts"].items()):
         lines.append(f"- `{status}`: {count}")
@@ -287,7 +308,9 @@ def main() -> int:
     scenes = select_scenes(manifest, args.split, parse_name_list(args.scenes))
     output_dir = Path(args.output_dir).resolve() if args.output_dir else resolve_path(config_path, config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
-    known_output_paths = [output_dir / name for name in (RAW_NAME, PER_SCENE_NAME, SUMMARY_NAME, AUDIT_NAME, MARKDOWN_NAME)]
+    known_output_paths = [
+        output_dir / name for name in (RAW_NAME, PER_SCENE_NAME, SUMMARY_NAME, PAIRED_NAME, AUDIT_NAME, MARKDOWN_NAME)
+    ]
     raw_path = output_dir / RAW_NAME
     if args.overwrite:
         for path in known_output_paths:
@@ -333,6 +356,7 @@ def main() -> int:
         "selected_scenes": [scene.__dict__ for scene in scenes],
         "selected_methods": list(methods),
         "selected_metrics": [plugin.spec.name for plugin in metric_plugins],
+        "paired_comparison": config.get("paired_comparison"),
         "metric_plugins": metric_audit,
         "dry_run": args.dry_run,
         "resumed_successful_plugins": [],
@@ -385,6 +409,42 @@ def main() -> int:
         seed=int(config["evaluation"].get("random_seed", 2025)),
         include_combined=args.combined,
     )
+    paired_rows: list[dict[str, Any]] = []
+    paired_summaries: list[dict[str, Any]] = []
+    paired_config = config.get("paired_comparison")
+    if isinstance(paired_config, dict):
+        baseline = paired_config.get("baseline_method")
+        treatment = paired_config.get("treatment_method")
+        if not isinstance(baseline, str) or not isinstance(treatment, str):
+            raise ValueError("paired_comparison requires baseline_method and treatment_method")
+        paired_rows = paired_delta_records(
+            records,
+            baseline_method=baseline,
+            treatment_method=treatment,
+            include_combined=args.combined,
+            tie_tolerance=float(paired_config.get("tie_tolerance", 1e-12)),
+        )
+        paired_summaries = aggregate_paired_deltas(
+            paired_rows,
+            bootstrap_samples=args.bootstrap_samples
+            if args.bootstrap_samples is not None
+            else int(config["evaluation"].get("bootstrap_samples", 0)),
+            seed=int(config["evaluation"].get("random_seed", 2025)),
+        )
+    summary_rows = summaries + [
+        {
+            "method": row["comparison"],
+            "split": row["split"],
+            "metric": row["metric"],
+            "valid_scenes": row["valid_scenes"],
+            "mean": row["mean_delta"],
+            "median": row["median_delta"],
+            "std": row["std_delta"],
+            "bootstrap_95ci_low": row.get("bootstrap_95ci_low"),
+            "bootstrap_95ci_high": row.get("bootstrap_95ci_high"),
+        }
+        for row in paired_summaries
+    ]
     write_jsonl(raw_path, records)
     write_csv(
         output_dir / PER_SCENE_NAME,
@@ -393,11 +453,29 @@ def main() -> int:
     )
     write_csv(
         output_dir / SUMMARY_NAME,
-        summaries,
+        summary_rows,
         ["method", "split", "metric", "valid_scenes", "mean", "median", "std", "bootstrap_95ci_low", "bootstrap_95ci_high"],
     )
+    write_csv(
+        output_dir / PAIRED_NAME,
+        paired_rows,
+        [
+            "scene_id",
+            "split",
+            "cohort",
+            "metric",
+            "baseline_method",
+            "treatment_method",
+            "baseline_value",
+            "treatment_value",
+            "delta",
+            "higher_is_better",
+            "improvement_direction",
+            "outcome",
+        ],
+    )
     write_json(output_dir / AUDIT_NAME, audit)
-    (output_dir / MARKDOWN_NAME).write_text(markdown_summary(config, summaries, audit), encoding="utf-8")
+    (output_dir / MARKDOWN_NAME).write_text(markdown_summary(config, summaries, paired_summaries, audit), encoding="utf-8")
     print(f"output_dir={output_dir}")
     print(f"scenes={len(scenes)} methods={len(methods)} metrics={len(metric_plugins)} dry_run={args.dry_run}")
     print("status_counts=" + json.dumps(audit["status_counts"], sort_keys=True))
