@@ -297,6 +297,7 @@ def make_request(sample: Sample, args: argparse.Namespace, prompt: str, image_co
         "guidance": args.guidance,
         "image_context_path": str(image_context.resolve()),
         "resolution": args.resolution,
+        "max_frames": args.frame_count,
         "num_conditional_frames": args.num_conditional_frames,
         "num_video_frames_per_chunk": args.frame_count,
         "num_steps": args.steps,
