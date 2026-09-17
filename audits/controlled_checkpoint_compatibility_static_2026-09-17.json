@@ -1,0 +1,77 @@
+{
+  "audit_type": "static_source_config_only",
+  "executed": false,
+  "repository_commit": "f797ef3c8223f8c2bd545d4b71a326093e9403b7",
+  "entry_point": "examples/inference_partial_hardlock_no_video_path.py",
+  "model_config_file": "cosmos_transfer2/singleview_partial_hardlock_config.py",
+  "experiment": "transfer2_singleview_partial_hardlock_pcd_rgb_image_context_example",
+  "checkpoints": {
+    "official_depth": {
+      "artifact": "nvidia/Cosmos-Transfer2.5-2B/general/depth/626e6618-bfcd-4d9a-a077-1409e2ce353f_ema_bf16.pt",
+      "source_reference": "cosmos_transfer2/config.py:158-164",
+      "status": "candidate_runtime_state_dict_unverified"
+    },
+    "stage1_epoch08": {
+      "artifact": "LouisonLu/cosmos-transfer2.5-pcd-maskpool-pcdmasked-resume-common-mask-2000videos-epoch4/epoch_08/model_ema_bf16.pt",
+      "training_config": "cosmos_transfer2/singleview_mask_config.py",
+      "training_experiment": "transfer2_singleview_posttrain_pcd_rgb_image_context_example",
+      "training_model_class": "ControlVideo2WorldModelRectifiedFlow",
+      "status": "candidate_runtime_state_dict_unverified"
+    },
+    "stage2_epoch04": {
+      "artifact": "LouisonLu/cosmos-transfer2.5-pcd-driving2240videos-Ymasked-warmstart-pcdfixed-epoch4/epoch_04/model_ema_bf16.pt",
+      "training_config": "cosmos_transfer2/singleview_target_loss_mask_config.py",
+      "training_experiment": "transfer2_singleview_posttrain_pcd_masked_rgb_target_loss_mask",
+      "training_model_class": "ControlVideo2WorldModelTargetLossMaskRectifiedFlow",
+      "status": "candidate_runtime_state_dict_unverified"
+    }
+  },
+  "shared_inference_model": {
+    "class": "ControlVideo2WorldModelRectifiedFlowPartialHardlock",
+    "hint_keys": ["depth"],
+    "image_context": true,
+    "extra_image_context_dim": 1152,
+    "supported_controls": ["edge", "vis", "depth", "seg"]
+  },
+  "required_identical_request": {
+    "image_context_path": "<same_masked_broken_first_rgb_frame.png>",
+    "depth.control_path": "<same_complete_corrected_pcd_video.mp4>",
+    "guided_generation_mask": "<same_93_frame_three_channel_mask.mp4>",
+    "prompt": "<same_prompt_string>",
+    "max_frames": 93,
+    "num_conditional_frames": 1,
+    "num_video_frames_per_chunk": 93,
+    "num_steps": 35,
+    "guidance": 7,
+    "seed": 2025,
+    "depth.control_weight": 1.0,
+    "guided_generation_mask_first_frame_only": true,
+    "guided_generation_mask_erode_px": 8,
+    "guided_generation_step_threshold": 25,
+    "keep_input_resolution": true,
+    "blended_decoding": false
+  },
+  "source_proven_behavior": {
+    "full_target_rgb_required": false,
+    "surrogate_input": "image_context at frame 0 plus black future frames",
+    "hardlock_identical_if_entry_and_config_identical": true,
+    "erosion_identical_if_request_identical": true,
+    "decoder_identical_if_non_blended_entry_identical": true,
+    "checkpoint_specific_inference_math_branch": false
+  },
+  "unverified_without_checkpoint_load": [
+    "missing_keys",
+    "unexpected_keys",
+    "tensor_shape_mismatches",
+    "actual_checkpoint_tensor_channels",
+    "complete_state_dict_compatibility"
+  ],
+  "loader_caveat": {
+    "source_reference": "cosmos_transfer2/_src/predict2/utils/model_loader.py:269-277",
+    "detail": "The loader uses strict=False, so a successful construction/load attempt alone cannot prove a complete state-dict match."
+  },
+  "controlled_diff": {
+    "allowed_differences": ["checkpoint_path", "output_name", "output_directory"],
+    "required_identical": ["entry_point", "model_config_file", "experiment", "request_fields", "decoder_route"]
+  }
+}
