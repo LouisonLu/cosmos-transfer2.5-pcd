@@ -377,7 +377,19 @@ def markdown_summary(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", required=True, help="Experiment YAML. Also accepts a path relative to evaluation/.")
+    parser.add_argument("--config", help="Experiment YAML. Also accepts a path relative to evaluation/.")
+    parser.add_argument(
+        "--data-root",
+        action="append",
+        help="Auto mode prediction folder as LABEL=PATH; repeat for multiple methods.",
+    )
+    parser.add_argument("--reference-root", help="Auto mode GT RGB folder, used by GT-based metrics.")
+    parser.add_argument("--input-root", help="Auto mode input RGB folder for input-preservation metrics.")
+    parser.add_argument("--mask-root", help="Auto mode mask-video folder for mask/input metrics.")
+    parser.add_argument("--max-depth", type=int, default=4, help="Maximum bounded discovery depth for auto mode.")
+    parser.add_argument("--default-split", choices=("id", "ood", "all"), default="all", help="Split label when folder names do not identify it.")
+    parser.add_argument("--paired-methods", nargs=2, metavar=("BASELINE", "TREATMENT"), help="Auto mode paired comparison method labels.")
+    parser.add_argument("--tie-tolerance", type=float, default=1e-12, help="Tie tolerance for auto paired deltas.")
     parser.add_argument("--metrics", nargs="+", help="Metric names, comma-separated names, or exactly 'all'.")
     parser.add_argument("--methods", nargs="+", help="Method names declared by the config.")
     parser.add_argument("--split", nargs="+", choices=("id", "ood"), default=["id", "ood"])
@@ -388,11 +400,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--overwrite", action="store_true", help="Replace the framework's known output files in the selected output directory.")
     parser.add_argument("--bootstrap-samples", type=int, default=None, help="Override evaluation.bootstrap_samples; 0 disables CI.")
     parser.add_argument("--combined", action="store_true", help="Also report an explicitly requested ID+OOD combined summary.")
+    parser.add_argument("--frame-count", type=int, default=93, help="Auto mode expected frames per video.")
+    parser.add_argument("--seed", type=int, default=2025, help="Auto mode aggregation seed.")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if args.data_root:
+        from evaluation.auto import run_auto
+
+        return run_auto(args)
+    if not args.config:
+        raise ValueError("Provide --config for manifest mode or --data-root LABEL=PATH for auto mode")
     config_path, config = load_config(args.config)
     manifest_path = resolve_path(config_path, config["manifest"])
     manifest = load_manifest(manifest_path)

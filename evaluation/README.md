@@ -64,6 +64,35 @@ this repository pins an official implementation, feature weights, sampling
 scheme, and ERP projection policy. The same rule applies to VBench, Q-Align,
 and MEt3R.
 
+## Auto-Discovery Mode
+
+For ad-hoc comparisons, the evaluator can discover videos from explicitly
+supplied method folders without a frozen manifest. Each `--data-root` is one
+method and may be repeated. Discovery is bounded by `--max-depth` and ignores
+Cosmos `_input_surrogate.mp4` files.
+
+GT-based metrics require `--reference-root`. Before any metric starts, the
+runner checks that every selected prediction has a unique paired GT, matching
+resolution, and enough frames. Missing pairs or incompatible video properties
+are written to `preflight.json` and stop the run before computation.
+
+```bash
+python -m evaluation.run_eval \
+  --data-root stage2_no_blend=/workspace/predictions/stage2/hardlock \
+  --data-root stage2_blended_decode=/workspace/predictions/stage2/hardlock_blended_decode \
+  --reference-root /workspace/data/all_rgb_videos \
+  --metrics seam lpips \
+  --paired-methods stage2_no_blend stage2_blended_decode \
+  --output-dir /workspace/evaluation_outputs/stage2_blend \
+  --overwrite
+```
+
+The progress header reports the discovered method counts, for example
+`videos=55; stage1=15, stage2=40`. Each video/metric is still scored
+independently. Paired deltas are computed only when `--paired-methods` is
+explicitly provided; GT is used as that video's reference and is not compared
+against another video's output.
+
 For the Stage 2 decoder claim, use `stage2_blend_ablation.yaml`. It writes
 `paired_deltas.csv` in addition to the required outputs. Each row is joined by
 scene, split, cohort, and metric, and defines `delta = blended - no_blend`.
