@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import platform
+import shutil
 import subprocess
 import sys
 import time
@@ -104,14 +105,28 @@ class EvaluationProgress:
                 f"elapsed {format_duration(current_elapsed)} avg {format_duration(current_average)} "
                 f"ETA {format_duration(current_eta)} speed {speed}"
             )
+        columns = max(shutil.get_terminal_size((120, 20)).columns - 1, 40)
+        compact_label = self.label if len(self.label) <= 34 else self.label[:31] + "..."
+        compact_current = self.current if len(self.current) <= 46 else self.current[:20] + "..." + self.current[-23:]
         line = (
-            f"{self.label} | [{bar}] {self.completed}/{self.total} "
+            f"{compact_label} [{bar}] {self.completed}/{self.total} "
             f"({percentage:5.1f}%) {status} "
             f"elapsed {format_duration(elapsed)} avg {format_duration(average)} "
-            f"ETA {format_duration(eta)} | running: {self.current}{current_progress}"
+            f"ETA {format_duration(eta)} | {compact_current}{current_progress}"
         )
+        if len(line) > columns:
+            compact_label = "Evaluation"
+            compact_current = self.current if len(self.current) <= 24 else self.current[:10] + "..." + self.current[-11:]
+            line = (
+                f"{compact_label} [{bar}] {self.completed}/{self.total} "
+                f"({percentage:5.1f}%) {status} "
+                f"elapsed {format_duration(elapsed)} avg {format_duration(average)} "
+                f"ETA {format_duration(eta)} | {compact_current}{current_progress}"
+            )
+        line = line[:columns]
         padding = max(self._last_width - len(line), 0)
-        sys.stderr.write("\r" + line + (" " * padding))
+        clear_line = "\r\033[2K" if sys.stderr.isatty() else "\r"
+        sys.stderr.write(clear_line + line + (" " * padding))
         sys.stderr.flush()
         self._last_width = len(line)
 
