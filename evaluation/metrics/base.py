@@ -9,7 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
+
+
+ProgressCallback = Callable[[int, int], None]
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,7 @@ class SceneContext:
     input_rgb: Path | None
     mask: Path | None
     policy: dict[str, Any]
+    progress: ProgressCallback | None = None
 
 
 class MetricPlugin(Protocol):

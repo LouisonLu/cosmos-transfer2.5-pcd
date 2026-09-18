@@ -25,7 +25,9 @@ def _erode_known_region(binary_mask: np.ndarray, erode_px: int) -> np.ndarray:
 def _known_arrays(context: SceneContext) -> tuple[np.ndarray, np.ndarray]:
     if context.input_rgb is None or context.mask is None:
         raise ValueError("Known-region metrics require input_rgb and mask")
-    _frame, prediction, input_rgb, mask = next(iter_prediction_input_mask(context.prediction, context.input_rgb, context.mask, context.policy))
+    _frame, prediction, input_rgb, mask = next(
+        iter_prediction_input_mask(context.prediction, context.input_rgb, context.mask, context.policy, context.progress)
+    )
     threshold = float(context.policy.get("mask_white_threshold", 0.5))
     erosion = int(context.policy.get("known_region_mask_erode_px", context.policy.get("mask_erode_px", 0)))
     known = _erode_known_region(mask.mean(axis=2) >= threshold, erosion)

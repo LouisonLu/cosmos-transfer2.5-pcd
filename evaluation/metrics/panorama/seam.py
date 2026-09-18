@@ -55,7 +55,7 @@ class SeamMetric:
         values: dict[str, list[float]] = {name: [] for name in self.spec.output_metrics if name != "temporal_seam_residual"}
         residuals: list[float] = []
         previous_delta: np.ndarray | None = None
-        for _frame_index, frame in iter_prediction_frames(context.prediction, context.policy):
+        for _frame_index, frame in iter_prediction_frames(context.prediction, context.policy, context.progress):
             if frame.shape[1] % 2 != 0:
                 raise ValueError(f"ERP seam metric requires even width: {context.prediction}")
             frame_values = cyclic_seam_metrics(frame)

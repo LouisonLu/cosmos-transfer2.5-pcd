@@ -33,7 +33,9 @@ class PSNRMetric:
             raise ValueError("PSNR requires reference video")
         squared_error = 0.0
         element_count = 0
-        for _frame, prediction, reference in iter_rgb_pairs(context.prediction, context.reference, context.policy):
+        for _frame, prediction, reference in iter_rgb_pairs(
+            context.prediction, context.reference, context.policy, context.progress
+        ):
             delta = prediction - reference
             squared_error += float((delta * delta).sum(dtype=float))
             element_count += delta.size

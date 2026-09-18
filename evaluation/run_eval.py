@@ -15,15 +15,17 @@ import math
 import platform
 import subprocess
 import sys
+import time
 from collections import Counter
 from datetime import datetime, timezone
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Iterable
 
 from evaluation.aggregate import aggregate_paired_deltas, aggregate_records, paired_delta_records
 from evaluation.config import load_config, resolve_dataset_path, resolve_path, resolve_prediction_path
 from evaluation.datasets.benchmark_manifest import BenchmarkScene, load_manifest, manifest_sha256
-from evaluation.metrics.base import MetricPlugin, SceneContext
+from evaluation.metrics.base import MetricAvailability, MetricPlugin, SceneContext
 from evaluation.metrics.registry import plugins
 
 
@@ -33,6 +35,96 @@ SUMMARY_NAME = "summary.csv"
 AUDIT_NAME = "audit.json"
 MARKDOWN_NAME = "summary.md"
 PAIRED_NAME = "paired_deltas.csv"
+
+
+class EvaluationProgress:
+    """Small dependency-free progress display for bounded scene/plugin work."""
+
+    def __init__(self, total: int, label: str = "Evaluation") -> None:
+        self.total = total
+        self.completed = 0
+        self.started_at = time.monotonic()
+        self.counts: Counter[str] = Counter()
+        self.current = "waiting"
+        self.current_completed = 0
+        self.current_total: int | None = None
+        self.current_started_at = self.started_at
+        self.current_frame_rate: float | None = None
+        self._last_width = 0
+        self.label = label
+
+    def start(self, context: SceneContext, plugin: MetricPlugin) -> None:
+        self.current = f"{context.scene_id} | {context.method} | stage={plugin.spec.name}"
+        self.current_completed = 0
+        self.current_total = None
+        self.current_started_at = time.monotonic()
+        self.current_frame_rate = None
+        self._render()
+
+    def update_current(self, completed: int, total: int) -> None:
+        self.current_completed = completed
+        self.current_total = total
+        current_elapsed = time.monotonic() - self.current_started_at
+        self.current_frame_rate = completed / current_elapsed if completed and current_elapsed > 0 else None
+        self._render()
+
+    def complete(self, status: str) -> None:
+        self.completed += 1
+        self.counts[status] += 1
+        self._render()
+
+    def close(self) -> None:
+        if self.total:
+            sys.stderr.write("\n")
+            sys.stderr.flush()
+
+    def _render(self) -> None:
+        elapsed = time.monotonic() - self.started_at
+        average = elapsed / self.completed if self.completed else None
+        remaining = max(self.total - self.completed, 0)
+        eta = average * remaining if average is not None else None
+        width = 28
+        filled = int(width * self.completed / self.total) if self.total else width
+        bar = "█" * filled + "░" * (width - filled)
+        status = " ".join(f"{key}={self.counts[key]}" for key in ("ok", "dry_run", "skipped", "unavailable", "failed", "resumed") if self.counts[key])
+        status = status or "status=--"
+        percentage = 100.0 * self.completed / self.total if self.total else 100.0
+        current_progress = ""
+        if self.current_total is not None:
+            current_width = 24
+            current_filled = int(current_width * self.current_completed / self.current_total) if self.current_total else current_width
+            current_bar = "█" * current_filled + "░" * (current_width - current_filled)
+            current_elapsed = time.monotonic() - self.current_started_at
+            current_average = current_elapsed / self.current_completed if self.current_completed else None
+            current_remaining = max(self.current_total - self.current_completed, 0)
+            current_eta = current_average * current_remaining if current_average is not None else None
+            speed = f"{self.current_frame_rate:.2f} frames/s" if self.current_frame_rate is not None else "-- frames/s"
+            current_progress = (
+                f" | current [{current_bar}] {self.current_completed}/{self.current_total} "
+                f"elapsed {format_duration(current_elapsed)} avg {format_duration(current_average)} "
+                f"ETA {format_duration(current_eta)} speed {speed}"
+            )
+        line = (
+            f"{self.label} | [{bar}] {self.completed}/{self.total} "
+            f"({percentage:5.1f}%) {status} "
+            f"elapsed {format_duration(elapsed)} avg {format_duration(average)} "
+            f"ETA {format_duration(eta)} | running: {self.current}{current_progress}"
+        )
+        padding = max(self._last_width - len(line), 0)
+        sys.stderr.write("\r" + line + (" " * padding))
+        sys.stderr.flush()
+        self._last_width = len(line)
+
+
+def format_duration(seconds: float | None) -> str:
+    if seconds is None:
+        return "--"
+    seconds = max(0, int(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
 
 
 def parse_name_list(values: list[str] | None) -> list[str]:
@@ -198,8 +290,10 @@ def has_completed_plugin(records: list[dict[str, Any]], plugin: MetricPlugin, co
     return expected <= completed
 
 
-def evaluate_plugin(plugin: MetricPlugin, context: SceneContext) -> list[dict[str, Any]]:
-    availability = plugin.availability()
+def evaluate_plugin(
+    plugin: MetricPlugin, context: SceneContext, availability: MetricAvailability | None = None
+) -> list[dict[str, Any]]:
+    availability = availability or plugin.availability()
     if not availability.available:
         return [base_record(plugin, context, plugin.spec.name, "unavailable", availability.reason)]
     problems = required_input_problems(plugin, context)
@@ -321,6 +415,7 @@ def main() -> int:
 
     previous_records = read_jsonl(raw_path) if args.resume else []
     planned_contexts = [make_context(config, method, scene) for method in methods.values() for scene in scenes]
+    availability_by_metric = {plugin.spec.name: plugin.availability() for plugin in metric_plugins}
     metric_audit = {
         plugin.spec.name: {
             "spec": {
@@ -337,7 +432,7 @@ def main() -> int:
                 "output_metrics": plugin.spec.output_metrics,
                 "granularity": plugin.spec.granularity,
             },
-            "availability": plugin.availability().__dict__,
+            "availability": availability_by_metric[plugin.spec.name].__dict__,
         }
         for plugin in metric_plugins
     }
@@ -376,28 +471,42 @@ def main() -> int:
         )
 
     new_records: list[dict[str, Any]] = []
-    if args.dry_run:
-        for context in planned_contexts:
-            for plugin in metric_plugins:
-                availability = plugin.availability()
-                if not availability.available:
-                    new_records.append(base_record(plugin, context, plugin.spec.name, "unavailable", availability.reason))
-                    continue
-                problems = required_input_problems(plugin, context)
-                if problems:
-                    new_records.append(base_record(plugin, context, plugin.spec.name, "skipped", "; ".join(problems)))
-                    continue
-                for metric in plugin.spec.output_metrics:
-                    new_records.append(base_record(plugin, context, metric, "dry_run", "Input validation passed; computation not started."))
-    else:
-        for context in planned_contexts:
-            for plugin in metric_plugins:
-                if args.resume and has_completed_plugin(previous_records, plugin, context):
-                    audit["resumed_successful_plugins"].append(
-                        {"scene_id": context.scene_id, "method": context.method, "plugin": plugin.spec.name}
-                    )
-                    continue
-                new_records.extend(evaluate_plugin(plugin, context))
+    progress = EvaluationProgress(len(planned_contexts) * len(metric_plugins), label="Evaluation")
+    try:
+        if args.dry_run:
+            for context in planned_contexts:
+                for plugin in metric_plugins:
+                    progress.start(context, plugin)
+                    active_context = replace(context, progress=progress.update_current)
+                    availability = availability_by_metric[plugin.spec.name]
+                    if not availability.available:
+                        new_records.append(base_record(plugin, context, plugin.spec.name, "unavailable", availability.reason))
+                        progress.complete("unavailable")
+                        continue
+                    problems = required_input_problems(plugin, active_context)
+                    if problems:
+                        new_records.append(base_record(plugin, context, plugin.spec.name, "skipped", "; ".join(problems)))
+                        progress.complete("skipped")
+                        continue
+                    for metric in plugin.spec.output_metrics:
+                        new_records.append(base_record(plugin, context, metric, "dry_run", "Input validation passed; computation not started."))
+                    progress.complete("dry_run")
+        else:
+            for context in planned_contexts:
+                for plugin in metric_plugins:
+                    progress.start(context, plugin)
+                    active_context = replace(context, progress=progress.update_current)
+                    if args.resume and has_completed_plugin(previous_records, plugin, context):
+                        audit["resumed_successful_plugins"].append(
+                            {"scene_id": context.scene_id, "method": context.method, "plugin": plugin.spec.name}
+                        )
+                        progress.complete("resumed")
+                        continue
+                    plugin_records = evaluate_plugin(plugin, active_context, availability_by_metric[plugin.spec.name])
+                    new_records.extend(plugin_records)
+                    progress.complete(plugin_records[0]["status"] if plugin_records else "failed")
+    finally:
+        progress.close()
     records = previous_records + new_records
     status_counts = Counter(record["status"] for record in records)
     audit["status_counts"] = dict(sorted(status_counts.items()))

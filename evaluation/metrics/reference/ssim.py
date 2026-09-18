@@ -52,7 +52,9 @@ class SSIMMetric:
         sigma = float(ssim_policy.get("sigma", 1.5))
         use_sample_covariance = bool(ssim_policy.get("use_sample_covariance", False))
         values = []
-        for _frame, prediction, reference in iter_rgb_pairs(context.prediction, context.reference, context.policy):
+        for _frame, prediction, reference in iter_rgb_pairs(
+            context.prediction, context.reference, context.policy, context.progress
+        ):
             values.append(
                 float(
                     structural_similarity(

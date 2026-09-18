@@ -9,6 +9,8 @@ from typing import Iterator
 
 import numpy as np
 
+from evaluation.metrics.base import ProgressCallback
+
 try:
     import cv2
 except ImportError:  # pragma: no cover - handled by plugin availability
@@ -80,7 +82,12 @@ def require_exact_match(first: VideoInfo, second: VideoInfo, label: str) -> None
         )
 
 
-def iter_rgb_pairs(prediction: Path, reference: Path, policy: dict[str, object]) -> Iterator[tuple[int, np.ndarray, np.ndarray]]:
+def iter_rgb_pairs(
+    prediction: Path,
+    reference: Path,
+    policy: dict[str, object],
+    progress: ProgressCallback | None = None,
+) -> Iterator[tuple[int, np.ndarray, np.ndarray]]:
     requested = frame_count_from_policy(policy)
     with open_video(prediction) as (pred_capture, pred_info), open_video(reference) as (ref_capture, ref_info):
         require_exact_match(pred_info, ref_info, "Reference metric")
@@ -90,20 +97,32 @@ def iter_rgb_pairs(prediction: Path, reference: Path, policy: dict[str, object])
                 f"prediction={pred_info.reported_frames}, reference={ref_info.reported_frames}"
             )
         for frame_index in range(requested):
-            yield frame_index, _read_rgb(pred_capture, prediction, frame_index), _read_rgb(ref_capture, reference, frame_index)
+            result = frame_index, _read_rgb(pred_capture, prediction, frame_index), _read_rgb(ref_capture, reference, frame_index)
+            if progress is not None:
+                progress(frame_index + 1, requested)
+            yield result
 
 
-def iter_prediction_frames(prediction: Path, policy: dict[str, object]) -> Iterator[tuple[int, np.ndarray]]:
+def iter_prediction_frames(
+    prediction: Path, policy: dict[str, object], progress: ProgressCallback | None = None
+) -> Iterator[tuple[int, np.ndarray]]:
     requested = frame_count_from_policy(policy)
     with open_video(prediction) as (capture, info):
         if info.reported_frames < requested:
             raise ValueError(f"Metric requires {requested} frames, got {info.reported_frames}: {prediction}")
         for frame_index in range(requested):
-            yield frame_index, _read_rgb(capture, prediction, frame_index)
+            result = frame_index, _read_rgb(capture, prediction, frame_index)
+            if progress is not None:
+                progress(frame_index + 1, requested)
+            yield result
 
 
 def iter_prediction_input_mask(
-    prediction: Path, input_rgb: Path, mask: Path, policy: dict[str, object]
+    prediction: Path,
+    input_rgb: Path,
+    mask: Path,
+    policy: dict[str, object],
+    progress: ProgressCallback | None = None,
 ) -> Iterator[tuple[int, np.ndarray, np.ndarray, np.ndarray]]:
     """Yield first-frame RGB/mask tuples for known-region preservation metrics."""
     with open_video(prediction) as (pred_capture, pred_info), open_video(input_rgb) as (input_capture, input_info), open_video(
@@ -113,4 +132,7 @@ def iter_prediction_input_mask(
         require_exact_match(pred_info, mask_info, "Known-region metric")
         if min(pred_info.reported_frames, input_info.reported_frames, mask_info.reported_frames) < 1:
             raise ValueError("Known-region metric needs frame 0 in prediction, input RGB, and mask")
-        yield 0, _read_rgb(pred_capture, prediction, 0), _read_rgb(input_capture, input_rgb, 0), _read_rgb(mask_capture, mask, 0)
+        result = 0, _read_rgb(pred_capture, prediction, 0), _read_rgb(input_capture, input_rgb, 0), _read_rgb(mask_capture, mask, 0)
+        if progress is not None:
+            progress(1, 1)
+        yield result

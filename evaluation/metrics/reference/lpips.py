@@ -59,7 +59,9 @@ class LPIPSMetric:
         model = lpips.LPIPS(net="alex").to(device).eval()
         values = []
         with torch.inference_mode():
-            for _frame, prediction, reference in iter_rgb_pairs(context.prediction, context.reference, context.policy):
+            for _frame, prediction, reference in iter_rgb_pairs(
+                context.prediction, context.reference, context.policy, context.progress
+            ):
                 prediction_tensor = torch.from_numpy(prediction).permute(2, 0, 1).unsqueeze(0).to(device) * 2.0 - 1.0
                 reference_tensor = torch.from_numpy(reference).permute(2, 0, 1).unsqueeze(0).to(device) * 2.0 - 1.0
                 values.append(float(model(prediction_tensor, reference_tensor).item()))
