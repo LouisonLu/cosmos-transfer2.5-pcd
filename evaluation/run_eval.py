@@ -383,9 +383,9 @@ def parse_args() -> argparse.Namespace:
         action="append",
         help="Auto mode prediction folder as LABEL=PATH; repeat for multiple methods.",
     )
-    parser.add_argument("--reference-root", help="Auto mode GT RGB folder, used by GT-based metrics.")
-    parser.add_argument("--input-root", help="Auto mode input RGB folder for input-preservation metrics.")
-    parser.add_argument("--mask-root", help="Auto mode mask-video folder for mask/input metrics.")
+    parser.add_argument("--reference-root", action="append", help="Auto mode GT RGB folder; repeat for ID/OOD folders.")
+    parser.add_argument("--input-root", action="append", help="Auto mode input RGB folder; repeat for ID/OOD folders.")
+    parser.add_argument("--mask-root", action="append", help="Auto mode mask-video folder; repeat for ID/OOD folders.")
     parser.add_argument("--max-depth", type=int, default=4, help="Maximum bounded discovery depth for auto mode.")
     parser.add_argument("--default-split", choices=("id", "ood", "all"), default="all", help="Split label when folder names do not identify it.")
     parser.add_argument("--paired-methods", nargs=2, metavar=("BASELINE", "TREATMENT"), help="Auto mode paired comparison method labels.")

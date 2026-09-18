@@ -189,18 +189,15 @@ def run_auto(args: Any) -> int:
         labels.add(label)
         labeled_roots.append((label, root))
 
-    reference_index = None
-    if args.reference_root:
-        reference_root = Path(args.reference_root).expanduser().resolve()
-        reference_index = build_path_index(discover_videos(reference_root, args.max_depth))
-    input_index = None
-    if args.input_root:
-        input_index = build_path_index(discover_videos(Path(args.input_root).expanduser().resolve(), args.max_depth))
-    mask_index = None
-    if args.mask_root:
-        mask_index = build_path_index(
-            discover_videos(Path(args.mask_root).expanduser().resolve(), args.max_depth), auxiliary=True
-        )
+    reference_roots = [Path(value).expanduser().resolve() for value in (args.reference_root or [])]
+    input_roots = [Path(value).expanduser().resolve() for value in (args.input_root or [])]
+    mask_roots = [Path(value).expanduser().resolve() for value in (args.mask_root or [])]
+    reference_paths = [path for root in reference_roots for path in discover_videos(root, args.max_depth)]
+    input_paths = [path for root in input_roots for path in discover_videos(root, args.max_depth)]
+    mask_paths = [path for root in mask_roots for path in discover_videos(root, args.max_depth)]
+    reference_index = build_path_index(reference_paths) if reference_paths else None
+    input_index = build_path_index(input_paths) if input_paths else None
+    mask_index = build_path_index(mask_paths, auxiliary=True) if mask_paths else None
 
     registry = plugins()
     metric_config = {"metrics": args.metrics or []}
@@ -301,7 +298,7 @@ def run_auto(args: Any) -> int:
         "method_counts": method_counts,
         "total_videos": sum(method_counts.values()),
         "metrics": [plugin.spec.name for plugin in metric_plugins],
-        "reference_root": str(args.reference_root) if args.reference_root else None,
+        "reference_roots": [str(root) for root in reference_roots],
         "errors": preflight_errors,
     }
     write_json(output_dir / "preflight.json", preflight)
