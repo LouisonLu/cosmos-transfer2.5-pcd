@@ -15,6 +15,7 @@
 
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 
+import os
 import time
 from contextlib import nullcontext
 from typing import Optional
@@ -628,11 +629,20 @@ def _video_vae(
                 torch.randn(1, 16, 32, 1, 1, device=device),
             )
     else:
-        if get_rank() == 0:
+        # On some multi-GPU runtimes, broadcasting the large VAE state from
+        # rank 0 fails during initialization with NCCL CUDA error 700.  An
+        # opt-in all-ranks load keeps the model state identical while avoiding
+        # that initialization-only broadcast.  The default behavior is unchanged.
+        load_on_all_ranks = os.environ.get("COSMOS_LOAD_VAE_ON_ALL_RANKS", "0") == "1"
+        if get_rank() == 0 or load_on_all_ranks:
+            local_pretrained_path = os.environ.get("COSMOS_VAE_LOCAL_PATH")
+            if local_pretrained_path:
+                pretrained_path = local_pretrained_path
             if not INTERNAL:
                 from cosmos_transfer2._src.imaginaire.utils.checkpoint_db import get_checkpoint_path
 
-                pretrained_path = get_checkpoint_path(pretrained_path)
+                if not local_pretrained_path:
+                    pretrained_path = get_checkpoint_path(pretrained_path)
             if pretrained_path.startswith("s3://"):
                 backend_key = "wan2pt1_vae"
                 easy_io.set_s3_backend(
@@ -679,7 +689,8 @@ def _video_vae(
                     torch.randn(1, 16, 32, 1, 1, device=device),
                     torch.randn(1, 16, 32, 1, 1, device=device),
                 )
-    sync_model_states(model)
+    if not (not SMOKE and pretrained_path is not None and os.environ.get("COSMOS_LOAD_VAE_ON_ALL_RANKS", "0") == "1"):
+        sync_model_states(model)
 
     if load_mean_std:
         log.info("broadcast mean and std for wan2pt1")
