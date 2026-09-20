@@ -306,13 +306,8 @@ def load_model_state_dict_from_checkpoint(
             load_planner = DefaultLoadPlanner(allow_partial_load=True)
             dcp_load_state_dict(_state_dict, storage_reader, load_planner)
             _model_wrapper.load_state_dict(_state_dict)
-        else:  # pt format - load on rank0 only and broadcast by default
-            # Opt-in fallback for runtimes where the large initialization
-            # broadcast fails with NCCL CUDA error 700. Each rank reads the
-            # same local .pt checkpoint, so weights and training math remain
-            # unchanged; only the initialization transport is different.
-            load_on_all_ranks = os.environ.get("COSMOS_LOAD_CHECKPOINT_ON_ALL_RANKS", "0") == "1"
-            if distributed.is_rank0() or load_on_all_ranks:
+        else:  # pt format - load on rank0 only and broadcast
+            if distributed.is_rank0():
                 if "s3://" in s3_checkpoint_dir:
                     pt_state_dict = easy_io.load(
                         s3_checkpoint_dir,
@@ -355,9 +350,8 @@ def load_model_state_dict_from_checkpoint(
                 # only load on rank0
                 _model_wrapper.load_state_dict(_state_dict)
 
-            if not load_on_all_ranks:
-                # Synchronize model states from rank 0 to all other ranks.
-                distributed.sync_model_states(model, src=0)
+            # Synchronize model states from rank 0 to all other ranks
+            distributed.sync_model_states(model, src=0)
 
         # Cache the model state dict only on rank0 to be consistent with loading
         if local_cache_dir is not None and distributed.is_rank0():
