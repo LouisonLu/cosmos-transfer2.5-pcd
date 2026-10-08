@@ -1,7 +1,7 @@
 """ERP cyclic seam metrics reused from the verified seam-inspection tool.
 
-The formulas are intentionally aligned with
-``/Users/louisonlu/Desktop/research/360video/tools/inspect_erp_seams.py``:
+The formulas are intentionally aligned with the project's ERP seam inspection
+utility:
 RGB is normalized to [0, 1], the ERP seam is the cyclic left/right boundary,
 and ordinary horizontal jumps provide the per-frame content baseline.
 """

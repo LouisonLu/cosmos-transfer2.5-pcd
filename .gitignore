@@ -130,6 +130,8 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/
@@ -187,6 +189,12 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+*.secret
+*.credentials
+*.pem
+*.key
+*.token
+.DS_Store
 
 # Cursor
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
@@ -196,14 +204,21 @@ cython_debug/
 .cursorindexingignore
 
 /checkpoints/
-#/datasets/
+/datasets/
 /datasets/1561dataset/
 /output/
-# /outputs/
+/outputs/
+/rgb_videos/
+/pcd_videos/
+/videos/
+/masks/
 /results/
 /tmp/
+/assets/pcd_input/
+/assets/pcd_input_ood/
+/assets/pcd_input_overfit/
+/assets/outputs/debug_*/
 
 !assets/**/*.png
 !assets/**/*.jpg
 !assets/**/*.mp4
-

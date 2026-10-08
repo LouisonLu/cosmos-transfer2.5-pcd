@@ -315,8 +315,12 @@ def make_request(sample: Sample, args: argparse.Namespace, prompt: str, image_co
         if sample.mask is None:
             raise ValueError(f"Hardlock requires a mask: {sample.stem}")
         request["guided_generation_mask"] = str(sample.mask.resolve())
-        request["guided_generation_mask_first_frame_only"] = not args.hardlock_all_frames
-        request["guided_generation_mask_erode_px"] = args.mask_erode_px
+        # These two fields belong to the no-video-path schema only. The
+        # standard video schema accepts the mask and step threshold, but
+        # rejects the no-video-specific first-frame/erosion fields.
+        if args.mode == "no-video-path":
+            request["guided_generation_mask_first_frame_only"] = not args.hardlock_all_frames
+            request["guided_generation_mask_erode_px"] = args.mask_erode_px
         request["guided_generation_step_threshold"] = args.guided_step_threshold
     return request
 

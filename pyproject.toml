@@ -58,17 +58,13 @@ dev = ["cosmos-oss[dev,gradio]"]
 
 [project.readme]
 content-type = "text/markdown"
-text = '''
-# Cosmos-Transfer2
-
-[Documentation](https://github.com/nvidia-cosmos/cosmos-transfer2/blob/main/README.md)
-'''
+file = "README.md"
 
 [project.urls]
-documentation = "https://github.com/nvidia-cosmos/cosmos-transfer2/blob/main/README.md"
-homepage = "https://github.com/nvidia-cosmos/cosmos-transfer2/"
-issues = "https://github.com/nvidia-cosmos/cosmos-transfer2/issues"
-repository = "https://github.com/nvidia-cosmos/cosmos-transfer2"
+documentation = "https://github.com/LouisonLu/cosmos-transfer2.5-pcd/blob/main/README.md"
+homepage = "https://github.com/LouisonLu/cosmos-transfer2.5-pcd"
+issues = "https://github.com/LouisonLu/cosmos-transfer2.5-pcd/issues"
+repository = "https://github.com/LouisonLu/cosmos-transfer2.5-pcd"
 
 [tool.uv]
 conflicts = [
