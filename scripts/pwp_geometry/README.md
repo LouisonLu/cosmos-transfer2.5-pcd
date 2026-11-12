@@ -163,20 +163,23 @@ torchrun --nproc_per_node=8 --master_port=29501 -m scripts.train \
   model.config.pwp_frame_size=1280x640 \
   dataloader_train.dataset.dataset_dir=<STAGE2_DATA_ROOT> \
   'dataloader_train.sampler.dataset=${dataloader_train.dataset}' \
-  dataloader_train.dataset.control_video_suffix=_erp_pose \
+  dataloader_train.dataset.control_video_suffix=_pcd \
   model.config.fsdp_shard_size=8 \
-  model_parallel.context_parallel_size=8 \
-  optimizer.lr=<LR> \
-  trainer.max_iter=<MAX_ITER> \
-  checkpoint.save_iter=<SAVE_ITER> \
-  checkpoint.load_path=<OUTPUT_ROOT>/cosmos_transfer2_posttrain/pwp_geometry/stage1_baseline_arealoss_seam/checkpoints/iter_<NNNNNNNNN> \
+  model_parallel.context_parallel_size=1 \
+  optimizer.lr=2e-5 \
+  'scheduler.cycle_lengths=[1120]' \
+  trainer.max_iter=1120 \
+  checkpoint.save_iter=280 \
+  checkpoint.load_path=<OUTPUT_ROOT>/cosmos_transfer2_posttrain/pwp_geometry/stage1_baseline_arealoss_seam/checkpoints/iter_<NNNNNNNNN>/model_ema_bf16.pt \
   checkpoint.load_training_state=False \
   checkpoint.strict_resume=False \
   job.wandb_mode=online \
   2>&1 | tee <OUTPUT_ROOT>/stage2_baseline_arealoss_seam.log
 ```
 
-Stage 1 的 checkpoint 如果在另一台機器上，整個 `iter_<NNNNNNNNN>/` 資料夾複製過來即可。方法紀錄在權重裡，會一起帶過來。
+- 資料是 Dropbox `driving_dataset/train`（2240 部），PCD 檔名是 `<stem>_pcd.mp4`；其餘資料夾（`rgb_videos/ mask/ prompts/`）用 experiment 預設值。
+- LR、scheduler、iteration、`context_parallel_size=1` 和之前正式的 Stage 2（`training_stage2.md`）相同。
+- 從 Stage 1 最後一個 checkpoint 的 EMA 權重 weights-only 開始（和之前 Stage 1 → Stage 2 的做法相同）。`.pt` 裡也帶著方法紀錄；在另一台機器上的話，只要把這個檔案複製過來。
 
 ## 5. 轉檔並推論（hardlock + no_video_path，erode 8 px）
 
