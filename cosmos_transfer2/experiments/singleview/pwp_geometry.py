@@ -5,6 +5,7 @@
 
 Each experiment is a deep copy of the original one, so data, optimizer, scheduler, checkpoint and network
 settings stay identical. Only the model class (and, for stage 1, the mask dataset), the dataset resolution, the
+sampler (new video order every epoch; stage 1 masks drawn per (epoch, video), see pwp_geometry/data.py), the
 job group/name and the run-record fields differ. The three method switches and the frame size have no default;
 set them on the command line:
 
@@ -33,6 +34,7 @@ from cosmos_transfer2.experiments.singleview.cosmos_singleview_target_loss_mask 
 )
 
 PWP_JOB_GROUP = "pwp_geometry"
+_PWP_DATA = "cosmos_transfer2._src.transfer2.pwp_geometry.data"
 _METHOD_ARGS = (
     "${model.config.pwp_area_loss},${model.config.pwp_vae_w_padding},${model.config.pwp_sphere_pos_emb},"
     "${model.config.pwp_frame_size}"
@@ -57,6 +59,15 @@ def _training_experiment(base: dict, stage: str, target_loss_mask: bool, data_tr
     experiment["job"]["group"] = PWP_JOB_GROUP
     experiment["job"]["name"] = f"${{pwp_run_name:{stage},{_METHOD_ARGS}}}"
     experiment["dataloader_train"]["dataset"]["resolution"] = "${pwp_dataset_resolution:${model.config.pwp_frame_size}}"
+    # New video order every epoch; stage 1 also draws its mask from (seed, epoch, video). See pwp_geometry/data.py.
+    if stage == "stage1":
+        experiment["dataloader_train"]["dataset"]["_target_"] = _PWP_DATA + ".PwPSingleViewTransferDatasetMask"
+    experiment["dataloader_train"]["sampler"] = {
+        "_target_": _PWP_DATA + ".PwPEpochShuffleSampler",
+        "dataset": "${dataloader_train.dataset}",
+        "seed": "${trainer.seed}",
+        "yield_epoch": stage == "stage1",
+    }
     experiment["model"]["config"].update(
         pwp_target_loss_mask=target_loss_mask,
         # Only written to the run record (<job dir>/pwp_run_records.jsonl).

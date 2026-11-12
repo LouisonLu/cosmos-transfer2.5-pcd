@@ -218,6 +218,7 @@ python run_cosmos_inference_batch.py <EVAL_DATA_ROOT> <INFER_OUTPUT>/stage2_base
 | `.../pwp_geometry/sphere_pos_emb.py` | token 經緯度 → xyz → MLP（零初始化） |
 | `.../pwp_geometry/network.py` | DiT 子類別：XYZ embedding + 方法紀錄 buffer |
 | `.../pwp_geometry/model.py` | 訓練 model：loss 權重、VAE、方法檢查、run record |
+| `.../pwp_geometry/data.py` | 每個 epoch 重洗的 sampler、依 (epoch, 影片) 抽 mask 的 Stage 1 dataset |
 | `.../pwp_geometry/inference_model.py`、`inference_pipeline.py` | 推論 model 和 pipeline |
 | `cosmos_transfer2/_src/transfer2/configs/vid2vid_transfer/defaults/model_pwp_geometry.py` | 註冊 model |
 | `cosmos_transfer2/experiments/singleview/pwp_geometry.py` | `pwp_geometry_stage1` / `_stage2` / `_inference_hardlock` |
@@ -228,6 +229,7 @@ python run_cosmos_inference_batch.py <EVAL_DATA_ROOT> <INFER_OUTPUT>/stage2_base
 
 ## 注意
 
+- 資料抽樣（`pwp_geometry/data.py`，四組相同）：每個 epoch 重新洗牌影片順序；Stage 1 的 mask 由 `(mask_pool_sampler_seed, epoch, 影片 index)` 決定，所以每張 GPU、每個 worker、每個 epoch 抽到的都不同，同一組 (epoch, 影片) 每次都抽到同一張。原本的流程沒有 `set_epoch`，且 mask sampler 只用 `seed + worker_id`，8 張 GPU 每步同一張 mask、每個 epoch 重複同一串 mask。中斷後接續時，影片順序從第 0 個 epoch 重新開始（和原本相同）。
 - W&B 的 `train/loss` 在開了 area loss 時是加權後的值，不能直接和 baseline 的曲線比較。
 - `1280x640` 讓訓練和推論都是同一個 1280×640、無 padding 的畫面，修掉了舊流程「訓練補 padding、推論拉伸」的不一致。
 - 預訓練沒看過「沒有 padding 的 80×40 token」這個組合（RoPE 位置都在看過的範圍內，權重不變），建議先比一組 `baseline` 的 `1280x640` 和 `legacy_720`，確認沒有變差再跑完四組。

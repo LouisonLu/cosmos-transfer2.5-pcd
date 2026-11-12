@@ -5,6 +5,7 @@
 
 import math
 
+import numpy as np
 import pytest
 import torch
 import torch.nn as nn
@@ -309,3 +310,76 @@ def test_xyz_embedding_starts_at_zero_and_rejects_spatial_split() -> None:
     horizontally_padded[..., :16] = 1
     with pytest.raises(ValueError, match="full-width"):
         embedding(horizontally_padded, 44, 80)
+
+
+class _KeyEcho(torch.utils.data.Dataset):
+    def __len__(self) -> int:
+        return 20
+
+    def __getitem__(self, key):
+        return torch.tensor(key)
+
+
+def test_epoch_sampler_reshuffles_every_pass_and_tags_the_epoch() -> None:
+    data = pytest.importorskip("cosmos_transfer2._src.transfer2.pwp_geometry.data")
+    dataset = _KeyEcho()
+    sampler = data.PwPEpochShuffleSampler(dataset, seed=0, yield_epoch=True)
+    loader = torch.utils.data.DataLoader(
+        dataset, sampler=sampler, batch_size=1, num_workers=2, multiprocessing_context="fork"
+    )
+    epochs = [[tuple(batch[0].tolist()) for batch in loader] for _ in range(3)]
+    for epoch, items in enumerate(epochs):
+        assert sorted(index for index, _ in items) == list(range(20))
+        assert {tag for _, tag in items} == {epoch}
+    orders = [[index for index, _ in items] for items in epochs]
+    assert orders[0] != orders[1] != orders[2]
+    plain = data.PwPEpochShuffleSampler(dataset, seed=0, yield_epoch=False)
+    assert list(plain) == orders[0] and list(plain) == orders[1]
+
+
+def _tiny_mask_pool(root) -> None:
+    from PIL import Image
+
+    for family, bucket, count in (
+        ("av2", "mask_10_15_percent", 40),
+        ("native_fov", "waymo_open", 10),
+        ("viewdrop", "waymo_open", 10),
+        ("renderer_confidence", "waymo_open", 10),
+        ("mixed", "waymo_open", 10),
+    ):
+        folder = root / "train" / family / bucket
+        folder.mkdir(parents=True)
+        for i in range(count):
+            mask = np.zeros((512, 1024), dtype=np.uint8)
+            mask[200:300, i * 20 : i * 20 + 100] = 255
+            Image.fromarray(mask).save(folder / f"{family}_{i:03d}.png")
+
+
+def test_mask_draw_depends_on_epoch_and_video_not_on_worker(tmp_path) -> None:
+    data = pytest.importorskip("cosmos_transfer2._src.transfer2.pwp_geometry.data")
+    from pathlib import Path
+
+    _tiny_mask_pool(tmp_path)
+    sampler_py = Path(__file__).resolve().parents[1] / "tools" / "mask_pool_sampler.py"
+
+    def worker_dataset():
+        dataset = object.__new__(data.PwPSingleViewTransferDatasetMask)
+        dataset.mask_pool_root = str(tmp_path)
+        dataset.mask_pool_sampler_py = str(sampler_py)
+        dataset.mask_pool_sampler_seed = 0
+        dataset.mask_pool_sampler_kwargs_json = None
+        dataset._dynamic_mask_sampler = None
+        dataset._dynamic_mask_sampler_worker_id = None
+        return dataset
+
+    def draw(dataset, epoch, index):
+        dataset._pwp_mask_seed = data.mask_seed(dataset.mask_pool_sampler_seed, epoch, index)
+        return dataset._sample_dynamic_mask()[1]["path"]
+
+    first, second = worker_dataset(), worker_dataset()
+    draws = {(epoch, index): draw(first, epoch, index) for epoch in range(2) for index in range(30)}
+    # Another worker, asked in a different order, gives the same mask for the same (epoch, video).
+    for key in reversed(list(draws)):
+        assert draw(second, *key) == draws[key]
+    assert len(set(draws.values())) > 30
+    assert sum(draws[(0, i)] != draws[(1, i)] for i in range(30)) > 20
