@@ -15,7 +15,6 @@ they draw different masks; the same (epoch, video) always gets the same mask, wh
 
 import random
 
-import numpy as np
 import torch.distributed as dist
 from torch.utils.data import DistributedSampler
 
@@ -23,6 +22,7 @@ from cosmos_transfer2._src.imaginaire.utils import log
 from cosmos_transfer2._src.transfer2.datasets.local_datasets.singleview_dataset_mask import (
     SingleViewTransferDatasetMask,
 )
+from cosmos_transfer2._src.transfer2.pwp_geometry.anyview_masks import mask_seed
 
 
 class PwPEpochShuffleSampler(DistributedSampler):
@@ -55,10 +55,6 @@ class PwPEpochShuffleSampler(DistributedSampler):
         if not self.yield_epoch:
             return indices
         return ((index, self.epoch) for index in indices)
-
-
-def mask_seed(base_seed: int, epoch: int, index: int) -> int:
-    return int(np.random.SeedSequence([int(base_seed), int(epoch), int(index)]).generate_state(1)[0])
 
 
 class PwPSingleViewTransferDatasetMask(SingleViewTransferDatasetMask):

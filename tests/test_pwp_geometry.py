@@ -383,3 +383,91 @@ def test_mask_draw_depends_on_epoch_and_video_not_on_worker(tmp_path) -> None:
         assert draw(second, *key) == draws[key]
     assert len(set(draws.values())) > 30
     assert sum(draws[(0, i)] != draws[(1, i)] for i in range(30)) > 20
+
+
+def _anyview_module():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "cosmos_transfer2/_src/transfer2/pwp_geometry/anyview_masks.py"
+    spec = importlib.util.spec_from_file_location("pwp_anyview_masks_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module, path
+
+
+def _anyview_config_path():
+    from pathlib import Path
+
+    return Path(__file__).resolve().parents[1] / "scripts/pwp_geometry/anyview_mask_sampler_config.json"
+
+
+def _tiny_driving_real_pool(root) -> None:
+    from PIL import Image
+
+    folder = root / "train" / "driving_real"
+    folder.mkdir(parents=True)
+    for i in range(3):
+        mask = np.zeros((512, 1024), dtype=np.uint8)
+        mask[220:300, :] = 255
+        mask[220:300, i * 300 : i * 300 + 100] = 0
+        Image.fromarray(mask).save(folder / f"real_{i}.png")
+
+
+def test_anyview_masks_are_valid_reproducible_and_follow_the_weights(tmp_path) -> None:
+    import json
+
+    module, _ = _anyview_module()
+    _tiny_driving_real_pool(tmp_path)
+    config = json.loads(_anyview_config_path().read_text())
+    sampler = module.MaskPoolSampler(tmp_path, **config)
+    families = []
+    for index in range(400):
+        mask, meta = module.training_mask(sampler, 0, 0, index)
+        assert mask.shape == (512, 1024) and mask.dtype == np.uint8 and set(np.unique(mask)) <= {0, 255}
+        families.append(meta["family"])
+        if index < 20:
+            again, _ = module.training_mask(module.MaskPoolSampler(tmp_path, **config), 0, 0, index)
+            assert np.array_equal(mask, again)
+    weights = config["family_weights"]
+    for family, weight in weights.items():
+        share = families.count(family) / len(families)
+        assert abs(share - weight / sum(weights.values())) < 0.07, (family, share)
+    other_epoch = [module.training_mask(sampler, 0, 1, i)[0] for i in range(20)]
+    assert sum(not np.array_equal(a, module.training_mask(sampler, 0, 0, i)[0]) for i, a in enumerate(other_epoch)) > 12
+
+
+def test_object_occlusion_hides_only_visible_pixels_and_wraps() -> None:
+    module, _ = _anyview_module()
+    visible = np.zeros((512, 1024), bool)
+    visible[200:320, :] = True
+    hidden_total, wrapped = 0, False
+    for seed in range(40):
+        occluded = module.occlude_objects(visible, np.random.default_rng(seed), (0.05, 0.3))
+        assert not (occluded & ~visible).any()
+        hidden = visible & ~occluded
+        hidden_total += hidden.sum()
+        wrapped |= bool(hidden[:, :8].any() and hidden[:, -8:].any())
+    assert 0.03 < hidden_total / (40 * visible.sum()) < 0.35
+    assert wrapped
+
+
+def test_exported_training_masks_equal_the_dataset_draw(tmp_path) -> None:
+    data = pytest.importorskip("cosmos_transfer2._src.transfer2.pwp_geometry.data")
+    module, sampler_py = _anyview_module()
+    _tiny_driving_real_pool(tmp_path)
+    dataset = object.__new__(data.PwPSingleViewTransferDatasetMask)
+    dataset.mask_pool_root = str(tmp_path)
+    dataset.mask_pool_sampler_py = str(sampler_py)
+    dataset.mask_pool_sampler_seed = 0
+    dataset.mask_pool_sampler_kwargs_json = str(_anyview_config_path())
+    dataset._dynamic_mask_sampler = None
+    dataset._dynamic_mask_sampler_worker_id = None
+    import json
+
+    exporter = module.MaskPoolSampler(tmp_path, **json.loads(_anyview_config_path().read_text()))
+    for epoch, index in [(0, 0), (0, 7), (1, 7), (1, 4999), (0, 3)]:
+        dataset._pwp_mask_seed = data.mask_seed(0, epoch, index)
+        drawn, _ = dataset._sample_dynamic_mask()
+        exported, _ = module.training_mask(exporter, 0, epoch, index)
+        assert np.array_equal(drawn, exported)

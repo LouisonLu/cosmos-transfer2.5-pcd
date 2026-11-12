@@ -102,7 +102,38 @@ torchrun --nproc_per_node=1 scripts/pwp_geometry/vae_seam_test.py \
   - `psnr_interior`：其餘區域的重建 PSNR。
 - `seam_crops/*.png`：把畫面平移半圈，讓接縫位在正中央的裁切圖。由上到下依序是原圖、zero、circular。
 
-## 3. Stage 1（mask pool，從官方 depth checkpoint 開始）
+## 3. Stage 1（any-view mask，從官方 depth checkpoint 開始）
+
+### Any-view mask（`pwp_geometry/anyview_masks.py`，四組相同）
+
+每個樣本抽一張 mask（白 = 看得到），同時套在首幀和 PCD。比例和遮擋設定在 `scripts/pwp_geometry/anyview_mask_sampler_config.json`：
+
+| 類別 | 比例 | 對應的真實輸入 |
+|---|---|---|
+| `driving_real` | 10% | 真實車載相機 mask（AV2 / Waymo / nuScenes / PandaSet），讀 `<mask_pool>/train/driving_real/` 的 200 張 |
+| `driving_front` | 15% | 單一車頭相機（single front-view 評估） |
+| `driving_multi` | 15% | 3–7 顆車用相機，隨機少 0–3 顆 |
+| `single_camera` | 25% | 任何方向的單一矩形相機：手機、手持、機器人頭部、俯拍、仰拍；橫幅、直幅、正方 |
+| `fisheye` | 5% | 150–220° 魚眼，有時朝正上或正下 |
+| `multi_camera` | 10% | 機器人頭 + 胸、無人機朝下、立體相機、任意多相機 |
+| `partial_pano` | 5% | 手機全景（90–270° 寬的帶） |
+| `pano_holes` | 2% | 有缺洞的 360：腳架、天頂、雙魚眼接縫（±90°）、遮擋物 |
+| `near_black` | 5% | 幾乎全黑：極窄的相機或少數散點 |
+| `no_mask` | 8% | 完整首幀（driving50 評估） |
+
+- 視野內物體遮擋：上表前五類有 40% 會再遮掉 1–6 個物體形狀（車輛方塊、橢圓、不規則多邊形，多在下半部），合計約 5–30% 的可見像素。
+- 除了 `driving_real` 的檔案，其他都在訓練時產生。每個 (epoch, 影片) 的 mask 只由 `(mask_pool_sampler_seed, epoch, 影片 index)` 決定，所以可以在訓練前匯出全部、逐張檢查（和訓練時逐像素相同，見下方指令與 CPU 測試）：
+
+```bash
+python scripts/pwp_geometry/export_anyview_masks.py training \
+  --mask-pool-root <MASK_POOL_ROOT> --dataset-dir <STAGE1_DATA_ROOT> --epochs 2 --out <OUT>/stage1_training_masks
+# 固定的 val mask（評估沒看過的視角用）
+python scripts/pwp_geometry/export_anyview_masks.py val --mask-pool-root <MASK_POOL_ROOT> --count 500 --seed 1 --out <OUT>/val_masks
+```
+
+`<MASK_POOL_ROOT>` 是 Dropbox 的 `360 video/mask_pool`（`train/driving_real` 200 張、`val/driving_real` 50 張，由 `select_driving_real_masks.py` 從 `mask_pool(old)` 挑出版型最不同的）。
+
+### 訓練
 
 四組只差三個方法開關，`pwp_frame_size` 和其餘設定完全相同。以下是 `baseline_arealoss_seam`：
 
@@ -128,8 +159,8 @@ torchrun --nproc_per_node=8 --master_port=29501 -m scripts.train \
   dataloader_train.dataset.mask_depth_control=True \
   dataloader_train.dataset.mask_pool_root=<MASK_POOL_ROOT> \
   dataloader_train.dataset.mask_pool_use_dynamic=True \
-  dataloader_train.dataset.mask_pool_sampler_py="$PWD/tools/mask_pool_sampler.py" \
-  dataloader_train.dataset.mask_pool_sampler_kwargs_json="$PWD/scripts/pwp_geometry/mask_pool_sampler_config.json" \
+  dataloader_train.dataset.mask_pool_sampler_py="$PWD/cosmos_transfer2/_src/transfer2/pwp_geometry/anyview_masks.py" \
+  dataloader_train.dataset.mask_pool_sampler_kwargs_json="$PWD/scripts/pwp_geometry/anyview_mask_sampler_config.json" \
   model.config.freeze_base_model=False \
   model.config.hint_keys=depth \
   model.config.min_num_conditional_frames=1 \
@@ -219,12 +250,15 @@ python run_cosmos_inference_batch.py <EVAL_DATA_ROOT> <INFER_OUTPUT>/stage2_base
 | `.../pwp_geometry/network.py` | DiT 子類別：XYZ embedding + 方法紀錄 buffer |
 | `.../pwp_geometry/model.py` | 訓練 model：loss 權重、VAE、方法檢查、run record |
 | `.../pwp_geometry/data.py` | 每個 epoch 重洗的 sampler、依 (epoch, 影片) 抽 mask 的 Stage 1 dataset |
+| `.../pwp_geometry/anyview_masks.py` | any-view mask：相機產生器、物體遮擋、`MaskPoolSampler`（`mask_pool_sampler_py`） |
 | `.../pwp_geometry/inference_model.py`、`inference_pipeline.py` | 推論 model 和 pipeline |
 | `cosmos_transfer2/_src/transfer2/configs/vid2vid_transfer/defaults/model_pwp_geometry.py` | 註冊 model |
 | `cosmos_transfer2/experiments/singleview/pwp_geometry.py` | `pwp_geometry_stage1` / `_stage2` / `_inference_hardlock` |
 | `cosmos_transfer2/pwp_geometry_config.py` | `--config` 入口 |
 | `cosmos_transfer2/inference_pwp_hardlock_no_video_path.py`、`examples/inference_pwp_hardlock_no_video_path.py` | 推論入口 |
-| `scripts/pwp_geometry/vae_seam_test.py`、`compare_configs.py`、`mask_pool_sampler_config.json` | 工具 |
+| `scripts/pwp_geometry/anyview_mask_sampler_config.json` | any-view mask 的比例與遮擋設定 |
+| `scripts/pwp_geometry/export_anyview_masks.py`、`select_driving_real_masks.py` | 匯出訓練 / val mask；挑選 driving_real |
+| `scripts/pwp_geometry/vae_seam_test.py`、`compare_configs.py` | 工具 |
 | `tests/test_pwp_geometry.py` | CPU 測試 |
 
 ## 注意
