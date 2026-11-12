@@ -259,9 +259,11 @@ def test_circular_erode_wraps_and_matches_the_original_away_from_the_seam() -> N
 
 
 def test_original_erode_copy_is_current() -> None:
-    pipeline = pytest.importorskip(
-        "cosmos_transfer2._src.transfer2.inference.inference_pipeline_partial_hardlock_no_video_path"
-    )
+    # The pipeline module imports the whole model stack; on a CPU process flash_attn's import-time assert fires.
+    try:
+        import cosmos_transfer2._src.transfer2.inference.inference_pipeline_partial_hardlock_no_video_path as pipeline
+    except Exception as error:
+        pytest.skip(f"inference pipeline not importable here: {type(error).__name__}: {error}")
     mask = torch.ones(3, 2, 32, 64)
     mask[..., 20:30, 10:40] = 0
     erode = pipeline.ControlVideo2WorldInferencePartialHardlockNoVideoPath._erode_guided_generation_mask
