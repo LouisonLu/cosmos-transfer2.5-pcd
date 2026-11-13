@@ -179,7 +179,14 @@ torchrun --nproc_per_node=8 --master_port=29501 -m scripts.train \
   2>&1 | tee <OUTPUT_ROOT>/stage1_baseline_arealoss_seam.log
 ```
 
-中斷後接續訓練：再執行一次完全相同的指令，會從輸出資料夾裡最新的 checkpoint 接續。
+中斷後接續訓練：同一段指令，只把最後兩個 checkpoint 參數換成要接續的 checkpoint 資料夾（含 `model/`、`optim/`），用官方的完整接續（模型含 EMA、optimizer、LR scheduler、iteration）：
+
+```bash
+  checkpoint.load_path=<OUTPUT_ROOT>/cosmos_transfer2_posttrain/pwp_geometry/stage1_<GROUP>/checkpoints/iter_<NNNNNNNNN> \
+  checkpoint.load_training_state=True \
+```
+
+sampler 從這個 iteration 算出 epoch 和位置接著讀（log 會印 `PwP sampler: ... start at iteration N: epoch E, skipping K videos`），接續後讀到的影片順序和 mask 和沒中斷時相同。換機器時把整個 `iter_<NNNNNNNNN>` 資料夾複製過去，`load_path` 指到新位置即可。
 
 ## 4. Stage 2（target loss mask，從「同一方法」的 Stage 1 checkpoint 開始）
 
@@ -263,7 +270,7 @@ python run_cosmos_inference_batch.py <EVAL_DATA_ROOT> <INFER_OUTPUT>/stage2_base
 
 ## 注意
 
-- 資料抽樣（`pwp_geometry/data.py`，四組相同）：每個 epoch 重新洗牌影片順序；Stage 1 的 mask 由 `(mask_pool_sampler_seed, epoch, 影片 index)` 決定，所以每張 GPU、每個 worker、每個 epoch 抽到的都不同，同一組 (epoch, 影片) 每次都抽到同一張。原本的流程沒有 `set_epoch`，且 mask sampler 只用 `seed + worker_id`，8 張 GPU 每步同一張 mask、每個 epoch 重複同一串 mask。中斷後接續時，影片順序從第 0 個 epoch 重新開始（和原本相同）。
+- 資料抽樣（`pwp_geometry/data.py`，四組相同）：每個 epoch 重新洗牌影片順序；Stage 1 的 mask 由 `(mask_pool_sampler_seed, epoch, 影片 index)` 決定，所以每張 GPU、每個 worker、每個 epoch 抽到的都不同，同一組 (epoch, 影片) 每次都抽到同一張。原本的流程沒有 `set_epoch`，且 mask sampler 只用 `seed + worker_id`，8 張 GPU 每步同一張 mask、每個 epoch 重複同一串 mask。用上面的接續指令（`load_path=.../iter_<N>` + `load_training_state=True`）接續時，sampler 從第 N 個 iteration 的 epoch 和位置接著讀；其他情況（例如從官方 `.pt` 開始）一律從第 0 個 epoch 開始。
 - W&B 的 `train/loss` 在開了 area loss 時是加權後的值，不能直接和 baseline 的曲線比較。
 - `1280x640` 讓訓練和推論都是同一個 1280×640、無 padding 的畫面，修掉了舊流程「訓練補 padding、推論拉伸」的不一致。
 - 預訓練沒看過「沒有 padding 的 80×40 token」這個組合（RoPE 位置都在看過的範圍內，權重不變），建議先比一組 `baseline` 的 `1280x640` 和 `legacy_720`，確認沒有變差再跑完四組。

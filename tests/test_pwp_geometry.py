@@ -366,6 +366,28 @@ def test_epoch_sampler_reshuffles_every_pass_and_tags_the_epoch() -> None:
     assert list(plain) == orders[0] and list(plain) == orders[1]
 
 
+def test_resume_command_continues_the_sampler_at_the_checkpoint() -> None:
+    data = pytest.importorskip("cosmos_transfer2._src.transfer2.pwp_geometry.data")
+    dataset = _KeyEcho()
+    uninterrupted = data.PwPEpochShuffleSampler(dataset, seed=0, yield_epoch=True)
+    stream = [item for _ in range(3) for item in uninterrupted]
+    official = "/ckpt/general/depth/official_ema_bf16.pt"
+    assert data.resume_iteration(official, False) == 0 and data.resume_iteration(official, True) == 0
+    assert data.resume_iteration("/out/run/checkpoints/iter_000000025", False) == 0
+    for iteration, batch_size in ((0, 1), (20, 1), (25, 1), (6, 2)):
+        resumed = data.PwPEpochShuffleSampler(
+            dataset,
+            seed=0,
+            yield_epoch=True,
+            load_path=f"/out/run/checkpoints/iter_{iteration:09d}/",
+            load_training_state=True,
+            batch_size=batch_size,
+        )
+        consumed = iteration * batch_size
+        continued = [item for _ in range(2) for item in resumed]
+        assert len(continued) >= 20 and continued == stream[consumed : consumed + len(continued)]
+
+
 def _tiny_mask_pool(root) -> None:
     from PIL import Image
 

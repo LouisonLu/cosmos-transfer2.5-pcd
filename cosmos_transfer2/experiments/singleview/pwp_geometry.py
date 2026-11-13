@@ -67,6 +67,11 @@ def _training_experiment(base: dict, stage: str, target_loss_mask: bool, data_tr
         "dataset": "${dataloader_train.dataset}",
         "seed": "${trainer.seed}",
         "yield_epoch": stage == "stage1",
+        # A resume command (load_path=.../iter_<N>, load_training_state=True) continues at iteration N's epoch.
+        "load_path": "${checkpoint.load_path}",
+        "load_training_state": "${checkpoint.load_training_state}",
+        "batch_size": "${dataloader_train.batch_size}",
+        "grad_accum_iter": "${trainer.grad_accum_iter}",
     }
     experiment["model"]["config"].update(
         pwp_target_loss_mask=target_loss_mask,
