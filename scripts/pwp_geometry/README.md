@@ -221,15 +221,17 @@ torchrun --nproc_per_node=8 --master_port=29501 -m scripts.train \
 
 ## 5. 轉檔並推論（hardlock + no_video_path，erode 8 px）
 
+基礎版就是 hardlock + no_video_path：只給第一幀（mask 外為黑），後面的幀全黑，避免整段 RGB 洩漏資訊。下面三個推論技巧預設全部關閉，要在指令上加旗標才會用。
+
 ```bash
 python scripts/convert_distcp_to_pt.py \
-  <OUTPUT_ROOT>/cosmos_transfer2_posttrain/pwp_geometry/stage2_baseline_arealoss_seam/checkpoints/iter_<NNNNNNNNN> \
-  <OUTPUT_ROOT>/converted/stage2_baseline_arealoss_seam_iter_<NNNNNNNNN>
+  <OUTPUT_ROOT>/cosmos_transfer2_posttrain/pwp_geometry/stage1_baseline_arealoss_seam/checkpoints/iter_<NNNNNNNNN> \
+  <OUTPUT_ROOT>/converted/stage1_baseline_arealoss_seam_iter_<NNNNNNNNN>
 
-python run_cosmos_inference_batch.py <EVAL_DATA_ROOT> <INFER_OUTPUT>/stage2_baseline_arealoss_seam \
+python run_cosmos_inference_batch.py <EVAL_DATA_ROOT> <INFER_OUTPUT>/stage1_baseline_arealoss_seam \
   --cosmos-root "$PWD" \
   --inference-script examples/inference_pwp_hardlock_no_video_path.py \
-  --checkpoint <OUTPUT_ROOT>/converted/stage2_baseline_arealoss_seam_iter_<NNNNNNNNN>/model_ema_bf16.pt \
+  --checkpoint <OUTPUT_ROOT>/converted/stage1_baseline_arealoss_seam_iter_<NNNNNNNNN>/model_ema_bf16.pt \
   --experiment pwp_geometry_inference_hardlock \
   --config-file cosmos_transfer2/pwp_geometry_config.py \
   --mode no-video-path \
@@ -237,12 +239,55 @@ python run_cosmos_inference_batch.py <EVAL_DATA_ROOT> <INFER_OUTPUT>/stage2_base
   --mask-erode-px 8 \
   --steps 35 --guidance 7 --seed 2025 \
   --inference-arg=--pwp-vae-w-padding=circular \
-  --inference-arg=--pwp-sphere-pos-emb=xyz \
-  --inference-arg=--pwp-frame-size=1280x640
+  --inference-arg=--pwp-sphere-pos-emb=xyz
 ```
 
-推論只需要兩個方法開關，因為 area loss 只影響訓練。`baseline` 和 `baseline_arealoss` 用 `zero` / `off`。
-`--pwp-frame-size` 會取代輸入 JSON 裡的 `resolution`；輸出仍會縮放回輸入影片的原始尺寸（例如 1024×512）。
+推論只需要兩個方法開關（會和 checkpoint 的方法紀錄比對），因為 area loss 只影響訓練：
+
+| checkpoint | `--pwp-vae-w-padding` | `--pwp-sphere-pos-emb` |
+|---|---|---|
+| `baseline`、`baseline_arealoss` | `zero` | `off` |
+| `baseline_seam`、`baseline_arealoss_seam` | `circular` | `xyz` |
+
+畫面尺寸預設 `1280x640`（和訓練相同），會取代輸入 JSON 裡的 `resolution`：2:1 的輸入（例如 1024×512）等比例縮放到 1280×640 生成，輸出再縮回輸入的原始尺寸；不是 2:1 的輸入會直接報錯。舊的 `legacy_720` checkpoint 才需要 `--inference-arg=--pwp-frame-size=legacy_720`。
+
+### 推論技巧（選用，預設關閉）
+
+| 旗標 | 作用 |
+|---|---|
+| `--inference-arg=--pwp-blended-decoding` | Dual-orientation blended decoding：最後的 latent 以 0° 和 180° 各解碼一次再混合，接縫附近用轉過的那次 |
+| `--inference-arg=--pwp-latent-rotation` | Latent rotation during denoising：每一步把 latent 連同所有對齊的條件（hardlock 的 GT 和 mask、control、control weight、padding mask、XYZ 位置編碼）水平平移 patch 寬度的隨機倍數，網路跑完再平移回來；sampler 永遠在原方向。平移量由 seed 決定，會寫進 log |
+| `--inference-arg=--pwp-latitude-noise-strength=<S>` | Latitude-aware noise：緯度 φ 的那一列初始 noise 只有 `round(W cos φ)` 個獨立值、沿圓周展開，每個值仍是 N(0,1)；以 `sqrt(1-S)·iid + sqrt(S)·緯度 noise` 混合，`S=0` 就是原本的 noise。模型訓練時沒看過這種 noise |
+
+- 全部關閉時直接呼叫原本的取樣迴圈，結果和原本的 hardlock 一樣；開了技巧也只包住初始 noise 和網路呼叫，迴圈本身不變。
+- Latent rotation 和 latitude noise 不能和 context parallel 一起用（需要整個 latent 在同一張 GPU）。
+- 開了哪些技巧會寫進輸出資料夾的 `pwp_inference_record.json`。不同設定請用不同的輸出資料夾。
+
+### 檢查 mask 邊界的黑色會不會被鎖進去（只輸出報告，不生成）
+
+hardlock 鎖的是「遮掉的第一幀」的 latent。VAE 編碼時會看到可見區外的黑色，所以 mask 邊界附近的 latent 可能和真實畫面的 latent 不同。這個工具用和推論完全相同的讀圖、mask erosion、VAE（zero 或 circular）和 latent mask，比較遮掉的第一幀和完整第一幀的 latent，列出每個 `--erode-px` 下被鎖住的 latent 格的誤差、依「離 mask 邊界幾 px」的誤差，以及 erosion 後 mask 內接近全黑的像素比例。
+
+```bash
+python run_cosmos_inference_batch.py <EVAL_DATA_ROOT> <CHECK_OUTPUT>/prepared \
+  --cosmos-root "$PWD" \
+  --inference-script examples/inference_pwp_hardlock_no_video_path.py \
+  --checkpoint <CKPT>.pt \
+  --experiment pwp_geometry_inference_hardlock \
+  --config-file cosmos_transfer2/pwp_geometry_config.py \
+  --mode no-video-path --guided-hardlock --mask-erode-px 8 \
+  --prepare-only
+
+python scripts/pwp_geometry/check_hardlock_black_leak.py \
+  --work-root <CHECK_OUTPUT>/prepared/_work -o <CHECK_OUTPUT>/report \
+  --checkpoint-path <CKPT>.pt \
+  --experiment pwp_geometry_inference_hardlock \
+  --config-file cosmos_transfer2/pwp_geometry_config.py \
+  --disable-guardrails \
+  --pwp-vae-w-padding zero --pwp-sphere-pos-emb off \
+  --erode-px 0 8 16 24 32 48
+```
+
+誤差 = 兩個 latent 在每格的 channel L2 距離 ÷ 完整畫面 latent 的 channel 範數中位數。離邊界很遠的格子是底線（應接近 0）。每個樣本另外輸出一張誤差圖（白線是 mask 邊界）。
 
 ## 檔案
 
@@ -259,13 +304,14 @@ python run_cosmos_inference_batch.py <EVAL_DATA_ROOT> <INFER_OUTPUT>/stage2_base
 | `.../pwp_geometry/data.py` | 每個 epoch 重洗的 sampler、依 (epoch, 影片) 抽 mask 的 Stage 1 dataset |
 | `.../pwp_geometry/anyview_masks.py` | any-view mask：相機產生器、物體遮擋、`MaskPoolSampler`（`mask_pool_sampler_py`） |
 | `.../pwp_geometry/inference_model.py`、`inference_pipeline.py` | 推論 model 和 pipeline |
+| `.../pwp_geometry/inference_techniques.py` | 推論技巧：latent rotation、latitude-aware noise（blended decoding 沿用原本的函式） |
 | `cosmos_transfer2/_src/transfer2/configs/vid2vid_transfer/defaults/model_pwp_geometry.py` | 註冊 model |
 | `cosmos_transfer2/experiments/singleview/pwp_geometry.py` | `pwp_geometry_stage1` / `_stage2` / `_inference_hardlock` |
 | `cosmos_transfer2/pwp_geometry_config.py` | `--config` 入口 |
 | `cosmos_transfer2/inference_pwp_hardlock_no_video_path.py`、`examples/inference_pwp_hardlock_no_video_path.py` | 推論入口 |
 | `scripts/pwp_geometry/anyview_mask_sampler_config.json` | any-view mask 的比例與遮擋設定 |
 | `scripts/pwp_geometry/export_anyview_masks.py`、`select_driving_real_masks.py` | 匯出訓練 / val mask；挑選 driving_real |
-| `scripts/pwp_geometry/vae_seam_test.py`、`compare_configs.py` | 工具 |
+| `scripts/pwp_geometry/vae_seam_test.py`、`compare_configs.py`、`check_hardlock_black_leak.py` | 工具 |
 | `tests/test_pwp_geometry.py` | CPU 測試 |
 
 ## 注意
@@ -275,3 +321,4 @@ python run_cosmos_inference_batch.py <EVAL_DATA_ROOT> <INFER_OUTPUT>/stage2_base
 - `1280x640` 讓訓練和推論都是同一個 1280×640、無 padding 的畫面，修掉了舊流程「訓練補 padding、推論拉伸」的不一致。
 - 預訓練沒看過「沒有 padding 的 80×40 token」這個組合（RoPE 位置都在看過的範圍內，權重不變），建議先比一組 `baseline` 的 `1280x640` 和 `legacy_720`，確認沒有變差再跑完四組。
 - 舊 checkpoint（用 `legacy_720` 訓練的）推論時請用 `--pwp-frame-size legacy_720`，才會和它們原本的數字一致。
+- Stage 1 訓練時第 0 幀的條件是 masked PCD（整張鎖定），hardlock 推論則是 masked RGB、只鎖已知區。四組的差異相同，所以彼此仍可比較；Stage 2 訓練的第 0 幀是 masked RGB，和推論較一致。

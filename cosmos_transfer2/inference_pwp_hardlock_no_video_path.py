@@ -41,6 +41,9 @@ class Control2WorldInferencePwPHardlockNoVideoPath(hardlock_no_video_path.Contro
         pwp_vae_w_padding: str,
         pwp_sphere_pos_emb: str,
         pwp_frame_size: str,
+        pwp_blended_decoding: bool = False,
+        pwp_latent_rotation: bool = False,
+        pwp_latitude_noise_strength: float = 0.0,
     ) -> None:
         check_choice("vae_w_padding", pwp_vae_w_padding)
         check_choice("sphere_pos_emb", pwp_sphere_pos_emb)
@@ -51,6 +54,9 @@ class Control2WorldInferencePwPHardlockNoVideoPath(hardlock_no_video_path.Contro
             pwp_vae_w_padding=pwp_vae_w_padding,
             pwp_sphere_pos_emb=pwp_sphere_pos_emb,
             pwp_frame_size=pwp_frame_size,
+            pwp_blended_decoding=pwp_blended_decoding,
+            pwp_latent_rotation=pwp_latent_rotation,
+            pwp_latitude_noise_strength=pwp_latitude_noise_strength,
         )
         with _pipeline_class(factory):
             super().__init__(args, batch_hint_keys=batch_hint_keys)
@@ -62,6 +68,7 @@ class Control2WorldInferencePwPHardlockNoVideoPath(hardlock_no_video_path.Contro
                 "vae_w_padding": pwp_vae_w_padding,
                 "sphere_pos_emb": pwp_sphere_pos_emb,
                 "frame_size": pwp_frame_size,
+                "techniques": self.inference_pipeline.pwp_techniques(),
                 "checkpoint": str(args.checkpoint_path),
                 "checkpoint_method": loaded.as_dict() if loaded else None,
                 "experiment": args.experiment,

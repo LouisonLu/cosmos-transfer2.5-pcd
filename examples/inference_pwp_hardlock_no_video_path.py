@@ -15,13 +15,17 @@
 
 """PwP geometry inference: same arguments as inference_partial_hardlock_no_video_path.py plus
 
-    --pwp-vae-w-padding zero|circular
-    --pwp-sphere-pos-emb off|xyz
-    --pwp-frame-size 1280x640|legacy_720
+    --pwp-vae-w-padding zero|circular      (required; checked against the checkpoint stamp)
+    --pwp-sphere-pos-emb off|xyz           (required; checked against the checkpoint stamp)
+    --pwp-frame-size 1280x640|legacy_720   (default 1280x640, the training frame size; replaces the JSON "resolution")
 
-The first two must match the checkpoint (they are checked against its stamp). The frame size should match the
-one the checkpoint was trained with; it replaces the "resolution" of the input JSON. Use with
---experiment pwp_geometry_inference_hardlock --config-file cosmos_transfer2/pwp_geometry_config.py.
+Without further flags this is the plain hardlock + no-video-path inference. Optional ERP techniques (off by default):
+
+    --pwp-blended-decoding                 decode at 0 and 180 degrees and blend
+    --pwp-latent-rotation                  roll the latent by a random multiple of the patch width at every step
+    --pwp-latitude-noise-strength S        0 < S <= 1: mix latitude-aware initial noise in (0 = off)
+
+Use with --experiment pwp_geometry_inference_hardlock --config-file cosmos_transfer2/pwp_geometry_config.py.
 """
 
 from pathlib import Path
@@ -68,8 +72,17 @@ class Args(pydantic.BaseModel):
     pwp_sphere_pos_emb: Literal["off", "xyz"]
     """Spherical XYZ position embedding the checkpoint was trained with."""
 
-    pwp_frame_size: Literal["1280x640", "legacy_720"]
-    """1280x640: read the 2:1 inputs at 1280x640 (no stretch). legacy_720: the original stretch to 1280x704."""
+    pwp_frame_size: Literal["1280x640", "legacy_720"] = "1280x640"
+    """1280x640 (training frame size): read the 2:1 inputs at 1280x640 (no stretch). legacy_720: old stretch to 1280x704."""
+
+    pwp_blended_decoding: bool = False
+    """Dual-orientation blended decoding: decode the final latent at 0 and 180 degrees and blend them."""
+
+    pwp_latent_rotation: bool = False
+    """Latent rotation during denoising: every step sees the latent rolled by a random multiple of the patch width."""
+
+    pwp_latitude_noise_strength: float = 0.0
+    """Latitude-aware initial noise mixed in with this strength in [0, 1]; 0 keeps the original i.i.d. noise."""
 
     setup: SetupArguments
     """Setup arguments. These can only be provided via CLI."""
@@ -95,6 +108,9 @@ def main(args: Args):
         pwp_vae_w_padding=args.pwp_vae_w_padding,
         pwp_sphere_pos_emb=args.pwp_sphere_pos_emb,
         pwp_frame_size=args.pwp_frame_size,
+        pwp_blended_decoding=args.pwp_blended_decoding,
+        pwp_latent_rotation=args.pwp_latent_rotation,
+        pwp_latitude_noise_strength=args.pwp_latitude_noise_strength,
     )
     inference.generate(inference_samples, output_dir=args.setup.output_dir)
 

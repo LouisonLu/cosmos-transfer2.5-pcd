@@ -3,6 +3,7 @@
 
 """CPU tests for the PwP geometry ablation (scripts/pwp_geometry/README.md)."""
 
+import dataclasses
 import math
 
 import numpy as np
@@ -16,6 +17,13 @@ from cosmos_transfer2._src.transfer2.pwp_geometry.frame_size import (
     NATIVE_RESOLUTION,
     check_native_erp_input,
     resolution_for_frame_size,
+)
+from cosmos_transfer2._src.transfer2.pwp_geometry.inference_techniques import (
+    RotationSchedule,
+    latitude_aware_noise,
+    mix_latitude_noise,
+    roll_condition,
+    rotated_denoise,
 )
 from cosmos_transfer2._src.transfer2.pwp_geometry.masks import (
     build_safe_latent_valid_mask_for_vae,
@@ -522,3 +530,132 @@ def test_exported_training_masks_equal_the_dataset_draw(tmp_path) -> None:
         drawn, _ = dataset._sample_dynamic_mask()
         exported, _ = module.training_mask(exporter, 0, epoch, index)
         assert np.array_equal(drawn, exported)
+
+
+# ---------------------------------------------------------------- inference techniques
+
+
+def test_latitude_noise_is_unit_gaussian_and_coarser_toward_the_poles() -> None:
+    noise = latitude_aware_noise((2000, 1, 1, 80, 160), seed=3)
+    assert noise.shape == (2000, 1, 1, 80, 160) and noise.dtype == torch.float32
+    assert torch.equal(noise, latitude_aware_noise((2000, 1, 1, 80, 160), seed=3))
+    assert not torch.equal(noise, latitude_aware_noise((2000, 1, 1, 80, 160), seed=4))
+    for row in (0, 20, 40, 79):  # row 0 holds only 3 independent values per sample
+        values = noise[..., row, :]
+        assert abs(values.mean().item()) < 0.05 and abs(values.var().item() - 1) < 0.08
+    distinct = [noise[0, 0, 0, row].unique().numel() for row in range(80)]
+    assert distinct[0] == distinct[79] == round(160 * math.cos(math.pi * (0.5 - 0.5 / 80))) == 3
+    assert distinct[39] == distinct[40] == 160  # the equator rows are i.i.d.
+    assert distinct[0] < distinct[10] < distinct[20] < distinct[39]
+
+
+def test_latitude_noise_mix_keeps_unit_variance_and_is_off_at_zero() -> None:
+    iid = torch.randn(200, 1, 1, 80, 160)
+    assert mix_latitude_noise(iid, seed=1, strength=0.0) is iid
+    mixed = mix_latitude_noise(iid, seed=1, strength=0.5)
+    assert abs(mixed.var().item() - 1) < 0.02
+    with pytest.raises(ValueError, match="strength"):
+        mix_latitude_noise(iid, seed=1, strength=1.5)
+
+
+def test_rotation_schedule_is_seeded_and_patch_aligned() -> None:
+    first, second = RotationSchedule(7, patch=2), RotationSchedule(7, patch=2)
+    shifts = [first.next(160) for _ in range(35)]
+    assert shifts == [second.next(160) for _ in range(35)] == first.shifts
+    assert all(shift % 2 == 0 and 0 <= shift < 160 for shift in shifts) and len(set(shifts)) > 10
+    with pytest.raises(ValueError, match="patch"):
+        first.next(161)
+
+
+@dataclasses.dataclass(frozen=True)
+class _Condition:
+    gt_frames: torch.Tensor
+    condition_video_input_mask_B_C_T_H_W: torch.Tensor
+    latent_control_input: torch.Tensor
+    padding_mask: torch.Tensor
+    control_context_scale: object
+    crossattn_emb: torch.Tensor
+    use_video_condition: bool = True
+
+
+def _condition(height: int = 8, width: int = 16, patch: int = 2) -> _Condition:
+    generator = torch.Generator().manual_seed(0)
+    mask = torch.zeros(1, 1, 3, height, width)
+    mask[:, :, 0, 2:6, 1:7] = 1  # hardlock: part of the first latent frame, touching the left border
+    return _Condition(
+        gt_frames=torch.randn(1, 4, 3, height, width, generator=generator),
+        condition_video_input_mask_B_C_T_H_W=mask,
+        latent_control_input=torch.randn(1, 4, 3, height, width, generator=generator),
+        padding_mask=torch.rand(1, 1, 8 * height, 8 * width, generator=generator),
+        control_context_scale=torch.rand(1, 1, 3, height // patch, width // patch, 1, generator=generator),
+        crossattn_emb=torch.randn(1, 5, 7, generator=generator),
+    )
+
+
+def _fake_denoise(circular: bool):
+    """Hardlock replacement of the original ``denoise`` around a conv net that reads every condition field."""
+    conv = nn.Conv3d(4, 4, 3, padding=0)
+    torch.nn.init.normal_(conv.weight, std=0.2)
+
+    def denoise(noise, xt, timesteps, condition):
+        mask = condition.condition_video_input_mask_B_C_T_H_W.repeat(1, 4, 1, 1, 1)
+        xt = condition.gt_frames * mask + xt * (1 - mask)
+        weight = condition.control_context_scale[0, :, :, :, :, 0].repeat_interleave(2, -1).repeat_interleave(2, -2)
+        pixels = nn.functional.avg_pool2d(condition.padding_mask, 8)[:, :, None]
+        h = xt + weight[:, None] * condition.latent_control_input + pixels + timesteps.view(1, 1, 1, 1, 1)
+        h = nn.functional.pad(h, (1, 1, 0, 0, 0, 0), mode="circular" if circular else "constant")
+        h = nn.functional.pad(h, (0, 0, 1, 1, 1, 1))
+        velocity = conv(h)
+        return (noise - condition.gt_frames) * mask + velocity * (1 - mask)
+
+    return denoise
+
+
+def _sample(denoise, condition, rotation=None, steps: int = 5) -> torch.Tensor:
+    noise = torch.randn(1, 4, 3, 8, 16, generator=torch.Generator().manual_seed(1))
+    x = noise
+    for step in range(steps):
+        t = torch.tensor(1 - step / steps)
+        shift = 0 if rotation is None else rotation.next(x.shape[-1])
+        x = x - rotated_denoise(denoise, shift, 2, noise, x, t, condition) / steps
+    return x
+
+
+def test_latent_rotation_is_exact_for_a_seamless_network_and_keeps_the_hardlock() -> None:
+    torch.manual_seed(0)
+    condition, denoise = _condition(), _fake_denoise(circular=True)
+    plain = _sample(denoise, condition)
+    rotation = RotationSchedule(5, patch=2)
+    rotated = _sample(denoise, condition, rotation)
+    assert any(rotation.shifts)
+    assert torch.allclose(plain, rotated, atol=1e-5)  # every grid-aligned input was rolled with the latent
+    mask = condition.condition_video_input_mask_B_C_T_H_W.expand_as(rotated).bool()
+    assert torch.allclose(rotated[mask], condition.gt_frames[mask], atol=1e-5)
+
+
+def test_latent_rotation_moves_the_seam_of_a_zero_padded_network() -> None:
+    torch.manual_seed(0)
+    condition, denoise = _condition(), _fake_denoise(circular=False)
+    plain, rotated = _sample(denoise, condition), _sample(denoise, condition, RotationSchedule(5, patch=2))
+    assert not torch.allclose(plain, rotated, atol=1e-3)
+    mask = condition.condition_video_input_mask_B_C_T_H_W.expand_as(rotated).bool()
+    assert torch.allclose(rotated[mask], condition.gt_frames[mask], atol=1e-5)
+
+
+def test_roll_condition_rolls_every_grid_field_and_refuses_unknown_ones() -> None:
+    condition = _condition()
+    rolled = roll_condition(condition, 4, (8, 16), patch=2)
+    assert torch.equal(rolled.gt_frames, torch.roll(condition.gt_frames, 4, -1))
+    assert torch.equal(rolled.padding_mask, torch.roll(condition.padding_mask, 32, -1))
+    assert torch.equal(rolled.control_context_scale, torch.roll(condition.control_context_scale, 2, -2))
+    assert rolled.crossattn_emb is condition.crossattn_emb and rolled.use_video_condition
+    assert roll_condition(dataclasses.replace(condition, control_context_scale=[1.0]), 4, (8, 16), 2)
+    with pytest.raises(ValueError, match="multiple of the patch"):
+        roll_condition(condition, 3, (8, 16), patch=2)
+
+    @dataclasses.dataclass(frozen=True)
+    class _WithUnknown(_Condition):
+        mystery: torch.Tensor = torch.zeros(1, 2, 3)
+
+    with pytest.raises(ValueError, match="mystery"):
+        roll_condition(_WithUnknown(**dataclasses.asdict(condition)), 4, (8, 16), patch=2)

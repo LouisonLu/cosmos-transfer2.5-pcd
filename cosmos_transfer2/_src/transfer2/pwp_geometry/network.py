@@ -22,8 +22,11 @@ class PwPSphereControlVaceDiT(MinimalV4LVGControlVaceDiT):
     - with ``pwp_sphere_pos_emb="xyz"``: a spherical XYZ embedding added to every patch-embedded token stream
       (main branch and control branch). The 3D RoPE is unchanged.
 
-    With ``pwp_sphere_pos_emb="off"`` the forward pass is exactly the parent's.
+    With ``pwp_sphere_pos_emb="off"`` the forward pass is exactly the parent's. ``pwp_token_roll`` is only set by
+    the inference latent rotation: the tokens arrive rolled by that many columns, so the embedding is rolled too.
     """
+
+    pwp_token_roll: int = 0
 
     def __init__(self, *args, pwp_sphere_pos_emb: str = "off", pwp_sphere_pos_emb_hidden_dim: int = 256, **kwargs):
         check_choice("sphere_pos_emb", pwp_sphere_pos_emb)
@@ -61,6 +64,8 @@ class PwPSphereControlVaceDiT(MinimalV4LVGControlVaceDiT):
         if self.pwp_sphere_xyz is not None:
             _, _, token_h, token_w, _ = x_B_T_H_W_D.shape
             sphere_emb = self.pwp_sphere_xyz(padding_mask, token_h, token_w)
+            if self.pwp_token_roll:
+                sphere_emb = torch.roll(sphere_emb, shifts=self.pwp_token_roll, dims=3)
             x_B_T_H_W_D = x_B_T_H_W_D + sphere_emb.to(dtype=x_B_T_H_W_D.dtype)
         return x_B_T_H_W_D, rope_emb, extra_pos_emb
 
