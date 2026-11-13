@@ -124,6 +124,33 @@ def test_checkpoint_mismatches() -> None:
     assert len(checkpoint_mismatches(None, {"vae_w_padding": "circular", "sphere_pos_emb": "xyz"})) == 2
 
 
+def test_training_starts_any_method_from_official_weights_but_resume_must_match() -> None:
+    try:
+        from cosmos_transfer2._src.transfer2.pwp_geometry.model import PwPGeometryModelMixin
+    except Exception as error:  # flash_attn and friends raise more than ImportError
+        pytest.skip(f"PwP model not importable here: {type(error).__name__}: {error}")
+
+    class Net(nn.Module):
+        def __init__(self, stamp):
+            super().__init__()
+            self.register_buffer("pwp_method_stamp", torch.tensor(stamp, dtype=torch.long))
+
+    def check(stamp, settings, training):
+        model = PwPGeometryModelMixin()
+        model.net, model.net_ema = Net(stamp), None
+        model._pwp_expected_settings = lambda: settings
+        model._pwp_any_method_from_unstamped = training
+        return model.pwp_check_checkpoint()
+
+    arealoss_seam = {"area_loss": "sphere_area", "vae_w_padding": "circular", "sphere_pos_emb": "xyz"}
+    assert check(STAMP_UNSET, arealoss_seam, training=True) is None
+    with pytest.raises(ValueError, match="without a PwP stamp"):
+        check(STAMP_UNSET, {"vae_w_padding": "circular", "sphere_pos_emb": "xyz"}, training=False)
+    baseline = PwPMethod(area_loss="off", vae_w_padding="zero", sphere_pos_emb="off").to_stamp()
+    with pytest.raises(ValueError, match="trained as baseline"):
+        check(baseline, arealoss_seam, training=True)
+
+
 # ---------------------------------------------------------------- sphere-area loss weights
 
 

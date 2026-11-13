@@ -87,6 +87,8 @@ class PwPGeometryModelMixin:
 
     _pwp_checked: bool = False
     _pwp_loaded_method: Optional[PwPMethod] = None
+    # Training may start any method from unstamped (official) weights; inference must match them.
+    _pwp_any_method_from_unstamped: bool = False
 
     def _pwp_expected_settings(self) -> dict[str, str]:
         """Switches that must match the stamp of the loaded checkpoint."""
@@ -127,7 +129,10 @@ class PwPGeometryModelMixin:
         if self._pwp_checked:
             return self._pwp_loaded_method
         loaded = self.pwp_checkpoint_method()
-        mismatches = checkpoint_mismatches(loaded, self._pwp_expected_settings())
+        if loaded is None and self._pwp_any_method_from_unstamped:
+            mismatches = []
+        else:
+            mismatches = checkpoint_mismatches(loaded, self._pwp_expected_settings())
         if mismatches:
             raise ValueError(
                 "PwP settings do not match the loaded checkpoint:\n  - "
@@ -164,6 +169,8 @@ class PwPGeometryRectifiedFlowConfig(ControlVideo2WorldRectifiedFlowConfig):
 
 class PwPGeometryRectifiedFlowModel(PwPGeometryModelMixin, ControlVideo2WorldModelRectifiedFlow):
     config: PwPGeometryRectifiedFlowConfig
+    # Every method's Stage 1 starts from the official weights; resuming or Stage 2 still needs a matching stamp.
+    _pwp_any_method_from_unstamped = True
 
     def __init__(self, config: PwPGeometryRectifiedFlowConfig, *args, **kwargs):
         self.pwp_method = PwPMethod(
