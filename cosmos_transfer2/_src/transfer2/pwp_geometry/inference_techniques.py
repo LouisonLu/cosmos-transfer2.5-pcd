@@ -13,6 +13,9 @@
   ``sqrt(1 - strength) * iid + sqrt(strength) * latitude``.
 
 Dual-orientation blended decoding reuses the existing 0°/180° decode of the blended-decode pipeline.
+
+PCD masking repeats Stage 1 training (``mask_depth_control=True``): the control video is black outside the visible
+region of frame 0 in every frame. The hardlock mask is used as is (not eroded), as the training keep mask.
 """
 
 import math
@@ -108,6 +111,14 @@ def roll_condition(condition, shift: int, latent_hw: tuple[int, int], patch: int
     return type(condition)(**kwargs)
 
 
+def mask_control(control_C_T_H_W: Tensor, mask: Tensor) -> Tensor:
+    """``control`` (range [0, 255]) black outside frame 0 of ``mask`` (range [0, 1], ``[..., H, W]``) in every frame."""
+    keep_H_W = mask.reshape(-1, *mask.shape[-2:])[0] >= 0.5  # first channel, frame 0
+    if tuple(keep_H_W.shape) != tuple(control_C_T_H_W.shape[-2:]):
+        raise ValueError(f"Mask {tuple(keep_H_W.shape)} and control {tuple(control_C_T_H_W.shape)} differ in size")
+    return control_C_T_H_W * keep_H_W.to(device=control_C_T_H_W.device, dtype=control_C_T_H_W.dtype)
+
+
 def rotated_denoise(denoise_fn, shift: int, patch: int, noise: Tensor, xt: Tensor, timesteps: Tensor, condition):
     """``denoise_fn`` on the inputs rolled by ``shift`` latent columns; the prediction is rolled back."""
     if shift == 0:
@@ -121,6 +132,7 @@ __all__ = [
     "NON_SPATIAL_CONDITION_FIELDS",
     "RotationSchedule",
     "latitude_aware_noise",
+    "mask_control",
     "mix_latitude_noise",
     "roll_condition",
     "roll_width",

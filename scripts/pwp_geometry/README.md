@@ -249,19 +249,20 @@ python run_cosmos_inference_batch.py <EVAL_DATA_ROOT> <INFER_OUTPUT>/stage1_base
 | `baseline`、`baseline_arealoss` | `zero` | `off` |
 | `baseline_seam`、`baseline_arealoss_seam` | `circular` | `xyz` |
 
-畫面尺寸預設 `1280x640`（和訓練相同），會取代輸入 JSON 裡的 `resolution`：2:1 的輸入（例如 1024×512）等比例縮放到 1280×640 生成，輸出再縮回輸入的原始尺寸；不是 2:1 的輸入會直接報錯。舊的 `legacy_720` checkpoint 才需要 `--inference-arg=--pwp-frame-size=legacy_720`。
+畫面尺寸預設 `1280x640`（和訓練相同），會取代輸入 JSON 裡的 `resolution`：2:1 的輸入（例如 1024×512）等比例縮放到 1280×640 生成，輸出再縮回輸入的原始尺寸；不是 2:1 的輸入會直接報錯。`legacy_720` 是舊流程（訓練：1280×640 上下各補 32 px 反射 padding 成 1280×704；推論：直接拉伸成 1280×704），只有用舊流程訓練的 checkpoint 才需要 `--inference-arg=--pwp-frame-size=legacy_720`。
 
-### 推論技巧（選用，預設關閉）
+### 選用功能（預設關閉）
 
 | 旗標 | 作用 |
 |---|---|
+| `--inference-arg=--pwp-mask-pcd` | PCD control 每一幀都用第 0 幀的 hardlock mask（不 erode）遮掉，mask 外為黑，和 Stage 1 訓練的 `mask_depth_control=True` 相同 |
 | `--inference-arg=--pwp-blended-decoding` | Dual-orientation blended decoding：最後的 latent 以 0° 和 180° 各解碼一次再混合，接縫附近用轉過的那次 |
 | `--inference-arg=--pwp-latent-rotation` | Latent rotation during denoising：每一步把 latent 連同所有對齊的條件（hardlock 的 GT 和 mask、control、control weight、padding mask、XYZ 位置編碼）水平平移 patch 寬度的隨機倍數，網路跑完再平移回來；sampler 永遠在原方向。平移量由 seed 決定，會寫進 log |
 | `--inference-arg=--pwp-latitude-noise-strength=<S>` | Latitude-aware noise：緯度 φ 的那一列初始 noise 只有 `round(W cos φ)` 個獨立值、沿圓周展開，每個值仍是 N(0,1)；以 `sqrt(1-S)·iid + sqrt(S)·緯度 noise` 混合，`S=0` 就是原本的 noise。模型訓練時沒看過這種 noise |
 
 - 全部關閉時直接呼叫原本的取樣迴圈，結果和原本的 hardlock 一樣；開了技巧也只包住初始 noise 和網路呼叫，迴圈本身不變。
 - Latent rotation 和 latitude noise 不能和 context parallel 一起用（需要整個 latent 在同一張 GPU）。
-- 開了哪些技巧會寫進輸出資料夾的 `pwp_inference_record.json`。不同設定請用不同的輸出資料夾。
+- 開了哪些功能會寫進輸出資料夾的 `pwp_inference_record.json`。不同設定請用不同的輸出資料夾。
 
 ### 檢查 mask 邊界的黑色會不會被鎖進去（只輸出報告，不生成）
 
@@ -304,7 +305,7 @@ python scripts/pwp_geometry/check_hardlock_black_leak.py \
 | `.../pwp_geometry/data.py` | 每個 epoch 重洗的 sampler、依 (epoch, 影片) 抽 mask 的 Stage 1 dataset |
 | `.../pwp_geometry/anyview_masks.py` | any-view mask：相機產生器、物體遮擋、`MaskPoolSampler`（`mask_pool_sampler_py`） |
 | `.../pwp_geometry/inference_model.py`、`inference_pipeline.py` | 推論 model 和 pipeline |
-| `.../pwp_geometry/inference_techniques.py` | 推論技巧：latent rotation、latitude-aware noise（blended decoding 沿用原本的函式） |
+| `.../pwp_geometry/inference_techniques.py` | 推論選用功能：PCD mask、latent rotation、latitude-aware noise（blended decoding 沿用原本的函式） |
 | `cosmos_transfer2/_src/transfer2/configs/vid2vid_transfer/defaults/model_pwp_geometry.py` | 註冊 model |
 | `cosmos_transfer2/experiments/singleview/pwp_geometry.py` | `pwp_geometry_stage1` / `_stage2` / `_inference_hardlock` |
 | `cosmos_transfer2/pwp_geometry_config.py` | `--config` 入口 |

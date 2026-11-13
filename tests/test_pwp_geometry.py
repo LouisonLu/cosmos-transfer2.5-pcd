@@ -21,6 +21,7 @@ from cosmos_transfer2._src.transfer2.pwp_geometry.frame_size import (
 from cosmos_transfer2._src.transfer2.pwp_geometry.inference_techniques import (
     RotationSchedule,
     latitude_aware_noise,
+    mask_control,
     mix_latitude_noise,
     roll_condition,
     rotated_denoise,
@@ -659,3 +660,16 @@ def test_roll_condition_rolls_every_grid_field_and_refuses_unknown_ones() -> Non
 
     with pytest.raises(ValueError, match="mystery"):
         roll_condition(_WithUnknown(**dataclasses.asdict(condition)), 4, (8, 16), patch=2)
+
+
+def test_mask_pcd_blacks_out_every_frame_with_the_frame0_mask() -> None:
+    control = torch.randint(1, 256, (3, 5, 8, 16), dtype=torch.uint8)
+    mask = torch.zeros(1, 3, 5, 8, 16)
+    mask[:, :, 0, 2:6, 3:9] = 1  # frame 0 decides; later mask frames are ignored, as the training keep mask
+    mask[:, :, 1:] = 1
+    masked = mask_control(control, mask)
+    keep = mask[0, 0, 0].bool()
+    assert masked.dtype == torch.uint8
+    assert torch.equal(masked[:, :, keep], control[:, :, keep]) and not masked[:, :, ~keep].any()
+    with pytest.raises(ValueError, match="differ in size"):
+        mask_control(control, torch.ones(1, 3, 1, 8, 8))

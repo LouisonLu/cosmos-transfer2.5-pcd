@@ -19,8 +19,9 @@
     --pwp-sphere-pos-emb off|xyz           (required; checked against the checkpoint stamp)
     --pwp-frame-size 1280x640|legacy_720   (default 1280x640, the training frame size; replaces the JSON "resolution")
 
-Without further flags this is the plain hardlock + no-video-path inference. Optional ERP techniques (off by default):
+Without further flags this is the plain hardlock + no-video-path inference. Optional (off by default):
 
+    --pwp-mask-pcd                         PCD control black outside the frame-0 hardlock mask, as in Stage 1 training
     --pwp-blended-decoding                 decode at 0 and 180 degrees and blend
     --pwp-latent-rotation                  roll the latent by a random multiple of the patch width at every step
     --pwp-latitude-noise-strength S        0 < S <= 1: mix latitude-aware initial noise in (0 = off)
@@ -75,6 +76,9 @@ class Args(pydantic.BaseModel):
     pwp_frame_size: Literal["1280x640", "legacy_720"] = "1280x640"
     """1280x640 (training frame size): read the 2:1 inputs at 1280x640 (no stretch). legacy_720: old stretch to 1280x704."""
 
+    pwp_mask_pcd: bool = False
+    """Make the PCD control black outside the frame-0 hardlock mask (not eroded) in every frame, as in Stage 1 training."""
+
     pwp_blended_decoding: bool = False
     """Dual-orientation blended decoding: decode the final latent at 0 and 180 degrees and blend them."""
 
@@ -108,6 +112,7 @@ def main(args: Args):
         pwp_vae_w_padding=args.pwp_vae_w_padding,
         pwp_sphere_pos_emb=args.pwp_sphere_pos_emb,
         pwp_frame_size=args.pwp_frame_size,
+        pwp_mask_pcd=args.pwp_mask_pcd,
         pwp_blended_decoding=args.pwp_blended_decoding,
         pwp_latent_rotation=args.pwp_latent_rotation,
         pwp_latitude_noise_strength=args.pwp_latitude_noise_strength,
