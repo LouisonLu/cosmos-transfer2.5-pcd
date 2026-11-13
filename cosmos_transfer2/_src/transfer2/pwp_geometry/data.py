@@ -81,8 +81,9 @@ class PwPEpochShuffleSampler(DistributedSampler):
         indices = list(super().__iter__())[self._skip :]
         self._skip = 0
         if not self.yield_epoch:
-            return indices
-        return ((index, self.epoch) for index in indices)
+            return iter(indices)
+        epoch = self.epoch  # bound now: the generator must not see a later set_epoch
+        return ((index, epoch) for index in indices)
 
 
 class PwPSingleViewTransferDatasetMask(SingleViewTransferDatasetMask):
