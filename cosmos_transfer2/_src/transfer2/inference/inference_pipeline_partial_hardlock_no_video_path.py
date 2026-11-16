@@ -293,7 +293,8 @@ class ControlVideo2WorldInferencePartialHardlockNoVideoPath(ControlVideo2WorldIn
                 )
 
                 if chunk_id == 0:
-                    data_batch[NUM_CONDITIONAL_FRAMES_KEY] = 1
+                    # 0 = no frame-0 latent conditioning (official Transfer2.5); the image context still guides appearance.
+                    data_batch[NUM_CONDITIONAL_FRAMES_KEY] = min(num_conditional_frames, 1)
                 else:
                     data_batch[NUM_CONDITIONAL_FRAMES_KEY] = 1 + (num_conditional_frames - 1) // 4
                 if partial_hardlock_mask is not None:
